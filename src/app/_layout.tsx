@@ -36,8 +36,10 @@ export default function RootLayout() {
         <ThemeProvider value={colorScheme==='dark'?DarkTheme:DefaultTheme}>
         <View style={{flex:1}} onLayout={onLayoutRootView}>
         <Stack >
-            {/* <Stack.Screen name="Onboarding" options={{ headerShown: false }} /> */}
+            <Stack.Screen name="Welcome" options={{ headerShown: false }} />
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="Login" options={{ headerShown: false }} />
+            <Stack.Screen name="register" options={{ headerShown: false }} />
         </Stack>
         </View>
         </ThemeProvider>

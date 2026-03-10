@@ -2,10 +2,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React from 'react';
 import {
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 
 export default function WelcomeScreen() {
@@ -55,14 +55,14 @@ export default function WelcomeScreen() {
       <View style={styles.footer}>
         <TouchableOpacity
           style={styles.loginButton}
-        //   onPress={() => router.push('/(auth)/login')}
+          onPress={() => router.push('/Login')}
         >
           <Text style={styles.loginButtonText}>Đăng nhập</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.registerButton}
-        //   onPress={() => router.push('/(auth)/register')}
+          onPress={() => router.push('/register')}
         >
           <Text style={styles.registerButtonText}>Tạo tài khoản mới</Text>
         </TouchableOpacity>

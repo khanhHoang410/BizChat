@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Google from 'expo-auth-session/providers/google';
 import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
@@ -22,9 +23,10 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  // Google Auth
   const [request, response, promptAsync] = Google.useAuthRequest({
-    expoClientId: 'YOUR_EXPO_CLIENT_ID',
+    iosClientId: '296490459621-jsbmljnv158q1755gflgakucomafqs6.apps.googleusercontent.com',
+    clientId: '296490459621-9kib4m5h4oi1ppetnn7bteu7vbs8kjv5.apps.googleusercontent.com',
+    redirectUri: 'com.googleusercontent.apps.296490459621-jsbmljnv158q1755gflgakucomafqs6:/oauthredirect',
     scopes: ['profile', 'email']
   });
 
@@ -34,8 +36,26 @@ export default function LoginScreen() {
       const result = await promptAsync();
       
       if (result?.type === 'success') {
-        // Xử lý đăng nhập thành công
-        router.replace('/(tabs)');
+        const { id_token } = result.params;
+        
+        // Gửi token lên backend
+        const response = await fetch('http://localhost:3001/api/auth/google', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: id_token })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+          // Lưu token
+          await AsyncStorage.setItem('userToken', data.token);
+          await AsyncStorage.setItem('userInfo', JSON.stringify(data.user));
+          
+          router.replace('/(tabs)');
+        } else {
+          Alert.alert('Lỗi', data.error || 'Đăng nhập thất bại');
+        }
       }
     } catch (error) {
       Alert.alert('Lỗi', 'Đăng nhập thất bại');
@@ -45,7 +65,7 @@ export default function LoginScreen() {
   };
 
   const handleEmailLogin = () => {
-    // Xử lý đăng nhập bằng email/password
+    // TODO: Gọi API login bằng email/password
     if (email && password) {
       router.replace('/(tabs)');
     } else {
@@ -141,7 +161,7 @@ export default function LoginScreen() {
       {/* Register Link */}
       <View style={styles.footer}>
         <Text style={styles.footerText}>Chưa có tài khoản? </Text>
-        <TouchableOpacity onPress={() => router.push('/(auth)/register')}>
+        <TouchableOpacity onPress={() => router.push('/register')}>
           <Text style={styles.registerLink}>Đăng ký ngay</Text>
         </TouchableOpacity>
       </View>

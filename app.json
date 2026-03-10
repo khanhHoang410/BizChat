@@ -8,8 +8,17 @@
     "scheme": "bizchatapp",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.khanhgold.bizchat-app",
+      "bundleIdentifier": "com.khanhgold.bizchatapp",
+      "infoPlist": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": [
+              "bizchatapp",
+              "com.googleusercontent.apps.296490459621-jsbmljnv158q1755gflgakucomafqs6"
+            ]
+          }
+        ]
+      },
       "appleTeamId": "X6F5T296SH"
     },
     "android": {
@@ -19,7 +28,8 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.khanhgold.bizchatapp" 
     },
     "web": {
       "output": "static",
@@ -35,6 +45,13 @@
             "image": "./assets/images/splash-icon.png",
             "imageWidth": 76
           }
+        }
+      ],
+      "expo-web-browser",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.296490459621-jsbmljnv158q1755gflgakucomafqs6"
         }
       ]
     ],

@@ -1,45 +1,99 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-    Alert,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 
 export default function RegisterScreen() {
   const router = useRouter();
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [agreeTerms, setAgreeTerms] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const handleRegister = () => {
-    // Validate
-    if (!name || !email || !password) {
-      Alert.alert('Lỗi', 'Vui lòng điền đầy đủ thông tin');
-      return;
+  // Khởi tạo Google Sign-In
+  useEffect(() => {
+    GoogleSignin.configure({
+      webClientId: '296490459621-9kib4m5h4oi1ppetnn7bteu7vbs8kjv5.apps.googleusercontent.com',
+      iosClientId: '296490459621-jsbtmljnv158ql755gflgakucomafqs6.apps.googleusercontent.com',
+       offlineAccess: false, // Tắt nếu không cần refresh token
+    });
+  }, []);
+
+  const handleGoogleSignIn = async () => {
+  try {
+    setLoading(true);
+    
+    // Kiểm tra Google Play Services (Android)
+    await GoogleSignin.hasPlayServices();
+    
+    // Thực hiện đăng nhập
+    const userInfo = await GoogleSignin.signIn();
+    // ✅ CÁCH 1: Lấy idToken từ userInfo (Đơn giản nhất)
+    // const idToken = userInfo.idToken;
+    
+    // ✅ CÁCH 2: Hoặc dùng getTokens() sau khi signIn
+  const idToken = userInfo.data?.idToken ?? (userInfo as any).idToken;
+
+    if (!idToken) {
+      throw new Error('Không lấy được ID token');
     }
-
-    if (password !== confirmPassword) {
-      Alert.alert('Lỗi', 'Mật khẩu không khớp');
-      return;
+    
+    console.log('✅ Đăng nhập Google thành công, token:', idToken);
+    console.log('✅ User info:', userInfo);
+    
+    // Gửi token về backend
+    await handleGoogleLogin(idToken);
+    
+  } catch (error: any) {
+    console.error('❌ Google Sign-In error:', error);
+    
+    if (error.code === 'SIGN_IN_CANCELLED') {
+      console.log('✋ User cancelled');
+    } else {
+      Alert.alert('Lỗi', error.message || 'Đăng nhập Google thất bại');
     }
+  } finally {
+    setLoading(false);
+  }
+};
 
-    if (!agreeTerms) {
-      Alert.alert('Lỗi', 'Vui lòng đồng ý với điều khoản');
-      return;
+  const handleGoogleLogin = async (idToken: string) => {
+    try {
+      const res = await fetch('http://192.168.1.33:3001/api/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: idToken })
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        await AsyncStorage.setItem('userToken', data.token);
+        await AsyncStorage.setItem('userInfo', JSON.stringify(data.user));
+        
+        Alert.alert('Thành công', 'Đăng ký tài khoản thành công!', [
+          { text: 'OK', onPress: () => router.replace('/(tabs)') }
+        ]);
+      } else {
+        Alert.alert('Lỗi', data.error || 'Đăng ký thất bại');
+      }
+    } catch (error) {
+      Alert.alert('Lỗi', 'Không thể kết nối đến server');
     }
+  };
 
-    // Xử lý đăng ký thành công
-    Alert.alert('Thành công', 'Đăng ký tài khoản thành công!', [
-    //   { text: 'OK', onPress: () => router.push('/(auth)/login') }
-    ]);
+  const handleLogout = async () => {
+    try {
+      await GoogleSignin.signOut();
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
   };
 
   return (
@@ -58,96 +112,43 @@ export default function RegisterScreen() {
         <Text style={styles.subtitle}>Đăng ký để bắt đầu sử dụng BizChat</Text>
       </View>
 
-      {/* Form */}
+      {/* Google Register Button */}
       <View style={styles.form}>
-        {/* Name */}
-        <View style={styles.inputContainer}>
-          <Ionicons name="person-outline" size={20} color="#999" style={styles.inputIcon} />
-          <TextInput
-            style={styles.input}
-            placeholder="Họ và tên"
-            value={name}
-            onChangeText={setName}
-          />
-        </View>
-
-        {/* Email */}
-        <View style={styles.inputContainer}>
-          <Ionicons name="mail-outline" size={20} color="#999" style={styles.inputIcon} />
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-          />
-        </View>
-
-        {/* Password */}
-        <View style={styles.inputContainer}>
-          <Ionicons name="lock-closed-outline" size={20} color="#999" style={styles.inputIcon} />
-          <TextInput
-            style={styles.input}
-            placeholder="Mật khẩu"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry={!showPassword}
-          />
-          <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-            <Ionicons 
-              name={showPassword ? "eye-off-outline" : "eye-outline"} 
-              size={20} 
-              color="#999" 
-            />
-          </TouchableOpacity>
-        </View>
-
-        {/* Confirm Password */}
-        <View style={styles.inputContainer}>
-          <Ionicons name="lock-closed-outline" size={20} color="#999" style={styles.inputIcon} />
-          <TextInput
-            style={styles.input}
-            placeholder="Nhập lại mật khẩu"
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            secureTextEntry={!showPassword}
-          />
-        </View>
-
-        {/* Terms */}
-        <TouchableOpacity 
-          style={styles.termsContainer}
-          onPress={() => setAgreeTerms(!agreeTerms)}
+        <TouchableOpacity
+          style={styles.googleButton}
+          onPress={handleGoogleSignIn}
+          disabled={loading}
         >
-          <Ionicons 
-            name={agreeTerms ? "checkbox" : "square-outline"} 
-            size={24} 
-            color={agreeTerms ? "#4285F4" : "#999"} 
-          />
-          <Text style={styles.termsText}>
-            Tôi đồng ý với{' '}
-            <Text style={styles.linkText}>Điều khoản sử dụng</Text> và{' '}
-            <Text style={styles.linkText}>Chính sách bảo mật</Text>
-          </Text>
+          {loading ? (
+            <ActivityIndicator color="#DB4437" />
+          ) : (
+            <>
+              <Ionicons name="logo-google" size={24} color="#DB4437" />
+              <Text style={styles.googleButtonText}>Đăng ký với Google</Text>
+            </>
+          )}
         </TouchableOpacity>
 
-        {/* Register Button */}
-        <TouchableOpacity
-          style={styles.registerButton}
-          onPress={handleRegister}
+        <View style={styles.divider}>
+          <View style={styles.dividerLine} />
+          <Text style={styles.dividerText}>HOẶC</Text>
+          <View style={styles.dividerLine} />
+        </View>
+
+        {/* Email option */}
+        <TouchableOpacity 
+          style={styles.emailButton}
+          onPress={() => Alert.alert('Thông báo', 'Tính năng đang phát triển')}
         >
-          <Text style={styles.registerButtonText}>Đăng ký</Text>
+          <Ionicons name="mail-outline" size={24} color="#4285F4" />
+          <Text style={styles.emailButtonText}>Đăng ký bằng Email</Text>
         </TouchableOpacity>
       </View>
 
       {/* Login Link */}
       <View style={styles.footer}>
         <Text style={styles.footerText}>Đã có tài khoản? </Text>
-        <TouchableOpacity 
-        // onPress={() =>
-        //      router.push('/(auth)/login')}
-             >
+        <TouchableOpacity onPress={() => router.push('/Login')}>
           <Text style={styles.loginLink}>Đăng nhập</Text>
         </TouchableOpacity>
       </View>
@@ -155,6 +156,7 @@ export default function RegisterScreen() {
   );
 }
 
+// Styles giữ nguyên
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -180,57 +182,58 @@ const styles = StyleSheet.create({
   form: {
     paddingHorizontal: 20,
   },
-  inputContainer: {
+  googleButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
     borderWidth: 1,
     borderColor: '#ddd',
     borderRadius: 12,
-    paddingHorizontal: 15,
-    marginBottom: 15,
-    height: 50,
+    gap: 10,
+    marginBottom: 20,
   },
-  inputIcon: {
-    marginRight: 10,
-  },
-  input: {
-    flex: 1,
-    height: '100%',
+  googleButtonText: {
+    color: '#333',
     fontSize: 16,
+    fontWeight: '500',
   },
-  termsContainer: {
+  divider: {
     flexDirection: 'row',
     alignItems: 'center',
     marginVertical: 20,
-    gap: 10,
   },
-  termsText: {
+  dividerLine: {
     flex: 1,
-    color: '#666',
+    height: 1,
+    backgroundColor: '#ddd',
+  },
+  dividerText: {
+    marginHorizontal: 10,
+    color: '#999',
     fontSize: 14,
-    lineHeight: 20,
   },
-  linkText: {
-    color: '#4285F4',
-    fontWeight: '500',
-  },
-  registerButton: {
-    backgroundColor: '#4285F4',
-    paddingVertical: 16,
-    borderRadius: 12,
+  emailButton: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 20,
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderWidth: 1,
+    borderColor: '#4285F4',
+    borderRadius: 12,
+    gap: 10,
+    backgroundColor: '#f8f9ff',
   },
-  registerButtonText: {
-    color: '#fff',
+  emailButtonText: {
+    color: '#4285F4',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   footer: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 20,
+    marginTop: 30,
   },
   footerText: {
     color: '#666',
