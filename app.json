@@ -14,7 +14,7 @@
           {
             "CFBundleURLSchemes": [
               "bizchatapp",
-              "com.googleusercontent.apps.296490459621-jsbmljnv158q1755gflgakucomafqs6"
+              "com.googleusercontent.apps.296490459621-jsbtmljnv158ql755gflgakucomafqs6"
             ]
           }
         ]
@@ -51,7 +51,7 @@
       [
         "@react-native-google-signin/google-signin",
         {
-          "iosUrlScheme": "com.googleusercontent.apps.296490459621-jsbmljnv158q1755gflgakucomafqs6"
+          "iosUrlScheme": "com.googleusercontent.apps.296490459621-jsbtmljnv158ql755gflgakucomafqs6"
         }
       ]
     ],

@@ -1,126 +1,200 @@
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import React from 'react';
 import {
+  SafeAreaView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
   View
 } from 'react-native';
+import Animated, {
+  FadeInDown,
+  FadeInUp
+} from 'react-native-reanimated';
 
 export default function WelcomeScreen() {
   const router = useRouter();
 
   return (
-    <View style={styles.container}>
-      {/* Header với logo */}
-      <View style={styles.header}>
-        <View style={styles.logoCircle}>
-          <Ionicons name="chatbubbles" size={80} color="#4285F4" />
-        </View>
-        <Text style={styles.title}>BizChat</Text>
-        <Text style={styles.subtitle}>
-          Kết nối doanh nghiệp của bạn với đồng nghiệp một cách dễ dàng
-        </Text>
-      </View>
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="light-content" />
+      
+      {/* Gradient Background */}
+      <LinearGradient
+        colors={['#667eea', '#764ba2']}
+        style={styles.background}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+      />
 
-      {/* Features */}
-      <View style={styles.features}>
-        <View style={styles.featureItem}>
-          <Ionicons name="chatbubble" size={32} color="#4285F4" />
-          <View style={styles.featureText}>
-            <Text style={styles.featureTitle}>Nhắn tin thời gian thực</Text>
-            <Text style={styles.featureDesc}>Trò chuyện 1-1 hoặc nhóm với đồng nghiệp</Text>
-          </View>
-        </View>
-
-        <View style={styles.featureItem}>
-          <Ionicons name="people" size={32} color="#4285F4" />
-          <View style={styles.featureText}>
-            <Text style={styles.featureTitle}>Quản lý nhóm</Text>
-            <Text style={styles.featureDesc}>Tạo nhóm làm việc, phân quyền dễ dàng</Text>
-          </View>
-        </View>
-
-        <View style={styles.featureItem}>
-          <Ionicons name="videocam" size={32} color="#4285F4" />
-          <View style={styles.featureText}>
-            <Text style={styles.featureTitle}>Họp video</Text>
-            <Text style={styles.featureDesc}>Gọi video chất lượng cao với đồng nghiệp</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Buttons */}
-      <View style={styles.footer}>
-        <TouchableOpacity
-          style={styles.loginButton}
-          onPress={() => router.push('/Login')}
+      {/* Content */}
+      <View style={styles.content}>
+        {/* Logo và tiêu đề */}
+        <Animated.View 
+          entering={FadeInUp.delay(200).duration(1000)}
+          style={styles.header}
         >
-          <Text style={styles.loginButtonText}>Đăng nhập</Text>
-        </TouchableOpacity>
+          <View style={styles.logoWrapper}>
+            <Ionicons name="chatbubbles" size={60} color="#fff" />
+          </View>
+          <Text style={styles.title}>BizChat</Text>
+          <Text style={styles.subtitle}>
+            Kết nối doanh nghiệp của bạn với đồng nghiệp
+          </Text>
+        </Animated.View>
 
-        <TouchableOpacity
-          style={styles.registerButton}
-          onPress={() => router.push('/register')}
+        {/* Features */}
+        <Animated.View 
+          entering={FadeInUp.delay(400).duration(1000)}
+          style={styles.featuresContainer}
         >
-          <Text style={styles.registerButtonText}>Tạo tài khoản mới</Text>
-        </TouchableOpacity>
+          <View style={styles.featureItem}>
+            <View style={styles.featureIcon}>
+              <Ionicons name="chatbubble" size={24} color="#667eea" />
+            </View>
+            <View style={styles.featureText}>
+              <Text style={styles.featureTitle}>Nhắn tin thời gian thực</Text>
+              <Text style={styles.featureDesc}>
+                Trò chuyện trực tiếp với đồng nghiệp mọi lúc mọi nơi
+              </Text>
+            </View>
+          </View>
 
-        <Text style={styles.termsText}>
-          Bằng cách tiếp tục, bạn đồng ý với{' '}
-          <Text style={styles.linkText}>Điều khoản sử dụng</Text>
-        </Text>
+          <View style={styles.featureItem}>
+            <View style={styles.featureIcon}>
+              <Ionicons name="people" size={24} color="#667eea" />
+            </View>
+            <View style={styles.featureText}>
+              <Text style={styles.featureTitle}>Quản lý nhóm hiệu quả</Text>
+              <Text style={styles.featureDesc}>
+                Tạo phòng làm việc nhóm, phân quyền dễ dàng
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.featureItem}>
+            <View style={styles.featureIcon}>
+              <Ionicons name="videocam" size={24} color="#667eea" />
+            </View>
+            <View style={styles.featureText}>
+              <Text style={styles.featureTitle}>Họp video trực tuyến</Text>
+              <Text style={styles.featureDesc}>
+                Gọi video chất lượng cao với tối đa 50 người
+              </Text>
+            </View>
+          </View>
+        </Animated.View>
+
+        {/* Buttons */}
+        <Animated.View 
+          entering={FadeInDown.delay(600).duration(1000)}
+          style={styles.footer}
+        >
+          <TouchableOpacity
+            style={styles.loginButton}
+            onPress={() => router.push('/Login')}
+            activeOpacity={0.9}
+          >
+            <Text style={styles.loginButtonText}>Đăng nhập</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.registerButton}
+            onPress={() => router.push('/register')}
+            activeOpacity={0.9}
+          >
+            <Text style={styles.registerButtonText}>Tạo tài khoản mới</Text>
+          </TouchableOpacity>
+
+          <Text style={styles.termsText}>
+            Bằng cách tiếp tục, bạn đồng ý với{' '}
+            <Text style={styles.linkText}>Điều khoản sử dụng</Text>
+          </Text>
+        </Animated.View>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#667eea',
+  },
+  background: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: 24,
+    paddingTop: 60,
+    paddingBottom: 30,
   },
   header: {
-    flex: 1.5,
-    justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    marginBottom: 50,
   },
-  logoCircle: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: '#E8F0FE',
+  logoWrapper: {
+    width: 100,
+    height: 100,
+    borderRadius: 25,
+    backgroundColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
   },
   title: {
-    fontSize: 36,
+    fontSize: 40,
     fontWeight: 'bold',
-    color: '#1a1a1a',
+    color: '#fff',
     marginBottom: 10,
   },
   subtitle: {
     fontSize: 16,
-    color: '#666',
+    color: '#fff',
     textAlign: 'center',
+    opacity: 0.9,
     lineHeight: 24,
-  },
-  features: {
-    flex: 1.5,
     paddingHorizontal: 20,
+  },
+  featuresContainer: {
+    flex: 1,
     justifyContent: 'center',
+    marginBottom: 30,
   },
   featureItem: {
     flexDirection: 'row',
-    marginBottom: 20,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  featureIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#f0f4ff',
+    justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 16,
   },
   featureText: {
-    marginLeft: 15,
     flex: 1,
+    justifyContent: 'center',
   },
   featureTitle: {
     fontSize: 16,
@@ -129,49 +203,53 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   featureDesc: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#666',
-    lineHeight: 20,
+    lineHeight: 18,
   },
   footer: {
-    flex: 1,
-    paddingHorizontal: 20,
-    justifyContent: 'flex-end',
-    paddingBottom: 30,
+    width: '100%',
   },
   loginButton: {
-    backgroundColor: '#4285F4',
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  loginButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  registerButton: {
     backgroundColor: '#fff',
     paddingVertical: 16,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#ddd',
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  loginButtonText: {
+    color: '#667eea',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  registerButton: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingVertical: 16,
+    borderRadius: 14,
+    alignItems: 'center',
     marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.5)',
   },
   registerButtonText: {
-    color: '#333',
+    color: '#fff',
     fontSize: 16,
     fontWeight: '600',
   },
   termsText: {
     textAlign: 'center',
-    color: '#999',
+    color: 'rgba(255,255,255,0.8)',
     fontSize: 12,
     lineHeight: 18,
   },
   linkText: {
-    color: '#4285F4',
+    color: '#fff',
+    fontWeight: '600',
+    textDecorationLine: 'underline',
   },
 });
