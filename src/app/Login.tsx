@@ -4,6 +4,8 @@ import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
+import socketService from '../app/lib/socket';
+
 import {
   ActivityIndicator,
   Alert,
@@ -58,18 +60,20 @@ export default function LoginScreen() {
 
   const handleGoogleLogin = async (idToken: string) => {
     try {
-      const res = await fetch('http://192.168.1.110:3001/api/auth/google', {
+      const res = await fetch('http://192.168.1.33:3001/api/auth/google', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: idToken })
       });
 
       const data = await res.json();
+      console.log('📦 Login response:', data); 
 
       if (res.ok) {
         await AsyncStorage.setItem('userToken', data.token);
         await AsyncStorage.setItem('userInfo', JSON.stringify(data.user));
-        
+        console.log('✅ Token saved:', data.token); // Debug token đã lưu
+        socketService.connect();
         router.replace('/(tabs)');
       } else {
         Alert.alert('Lỗi', data.error || 'Đăng nhập thất bại');
