@@ -1,21 +1,21 @@
 import { Colors } from '@/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    FlatList,
-    Image,
-    KeyboardAvoidingView,
-    Platform,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
-    useColorScheme,
+  ActivityIndicator,
+  FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+  useColorScheme,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import socketService from '../lib/socket';
@@ -61,7 +61,7 @@ const ChatDetailScreen = () => {
   const fetchUserInfo = async () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
-      const response = await fetch(`http://192.168.1.33:3001/api/users/${id}`, {
+      const response = await fetch(`http://192.168.1.75:3001/api/users/${id}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
@@ -76,7 +76,7 @@ const ChatDetailScreen = () => {
   const fetchMessages = async () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
-      const response = await fetch(`http://192.168.1.33:3001/api/chat/messages/${id}`, {
+      const response = await fetch(`http://192.168.1.75:3001/api/chat/messages/${id}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
@@ -92,7 +92,7 @@ const ChatDetailScreen = () => {
   const fetchCurrentUser = async () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
-      const response = await fetch('http://192.168.1.33:3001/api/auth/profile', {
+      const response = await fetch('http://192.168.1.75:3001/api/auth/profile', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
@@ -124,7 +124,7 @@ const ChatDetailScreen = () => {
       if (unreadMessages.length > 0) {
         console.log('📚 Đánh dấu đã đọc:', unreadMessages.length, 'tin nhắn');
         
-        await fetch('http://192.168.1.33:3001/api/chat/mark-read', {
+        await fetch('http://192.168.1.75:3001/api/chat/mark-read', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -278,18 +278,27 @@ const ChatDetailScreen = () => {
   };
 
   // Render tin nhắn
-  const renderMessage = ({ item, index }: { item: Message; index: number }) => {
-    const isMyMessage = item.sender._id === currentUser?._id;
-    const showAvatar = index === 0 || messages[index - 1]?.sender._id !== item.sender._id;
+  // Render tin nhắn
+// Render tin nhắn
+const renderMessage = ({ item, index }: { item: Message; index: number }) => {
+  const isMyMessage = item.sender._id === currentUser?._id;
+  
+  const isEndOfSequence = index === messages.length - 1 || 
+    messages[index + 1]?.sender._id !== item.sender._id;
+  
+  const showAvatar = !isMyMessage && isEndOfSequence;
 
-    return (
-      <View style={[
-        styles.messageRow,
-        isMyMessage ? styles.myMessageRow : styles.otherMessageRow
-      ]}>
-        {!isMyMessage && showAvatar && (
-          <View style={styles.avatarContainer}>
-            {item.sender.avatar ? (
+  return (
+    <View style={[
+      styles.messageRow,
+      isMyMessage ? styles.myMessageRow : styles.otherMessageRow
+    ]}>
+      {/* Avatar - chỉ hiển thị ở tin nhắn cuối cụm */}
+      {!isMyMessage && (
+        <View style={styles.avatarContainer}>
+          {showAvatar ? (
+            // Hiển thị avatar ở tin nhắn cuối
+            item.sender.avatar ? (
               <Image source={{ uri: item.sender.avatar }} style={styles.avatar} />
             ) : (
               <View style={[styles.avatar, { backgroundColor: colors.tint + '20' }]}>
@@ -297,43 +306,44 @@ const ChatDetailScreen = () => {
                   {item.sender.name.charAt(0).toUpperCase()}
                 </Text>
               </View>
-            )}
-          </View>
-        )}
-        
-        {!isMyMessage && !showAvatar && <View style={styles.avatarPlaceholder} />}
-
-        <View style={[
-          styles.messageBubble,
-          isMyMessage ? styles.myMessage : styles.otherMessage,
-          { backgroundColor: isMyMessage ? colors.tint : colors.backgroundElement }
+            )
+          ) : (
+            <View style={styles.avatarPlaceholder} />
+          )}
+        </View>
+      )}
+      
+      {/* Tin nhắn */}
+      <View style={[
+        styles.messageBubble,
+        isMyMessage ? styles.myMessage : styles.otherMessage,
+        { backgroundColor: isMyMessage ? colors.tint : colors.backgroundElement }
+      ]}>
+        <Text style={[
+          styles.messageText,
+          { color: isMyMessage ? '#fff' : colors.text }
         ]}>
+          {item.content}
+        </Text>
+        <View style={styles.messageFooter}>
           <Text style={[
-            styles.messageText,
-            { color: isMyMessage ? '#fff' : colors.text }
+            styles.messageTime,
+            { color: isMyMessage ? '#fff' + '80' : colors.textSecondary }
           ]}>
-            {item.content}
+            {formatTime(item.createdAt)}
           </Text>
-          <View style={styles.messageFooter}>
-            <Text style={[
-              styles.messageTime,
-              { color: isMyMessage ? '#fff' + '80' : colors.textSecondary }
-            ]}>
-              {formatTime(item.createdAt)}
-            </Text>
-            {isMyMessage && (
-              <Ionicons 
-                name={item.readBy.length > 1 ? "checkmark-done" : "checkmark"} 
-                size={16} 
-                color={isMyMessage ? '#fff' + '80' : colors.textSecondary} 
-              />
-            )}
-          </View>
+          {isMyMessage && (
+            <Ionicons 
+              name={item.readBy.length > 0 ? "checkmark-done" : "checkmark"} 
+              size={16} 
+              color={isMyMessage ? '#fff' + '80' : colors.textSecondary} 
+            />
+          )}
         </View>
       </View>
-    );
-  };
-
+    </View>
+  );
+};
   if (loading) {
     return (
       <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
@@ -343,6 +353,8 @@ const ChatDetailScreen = () => {
   }
 
   return (
+    <>
+    <Stack.Screen options={{headerShown:false}}/>
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar barStyle={scheme === 'dark' ? 'light-content' : 'dark-content'} />
       
@@ -438,6 +450,7 @@ const ChatDetailScreen = () => {
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
+    </>
   );
 };
 

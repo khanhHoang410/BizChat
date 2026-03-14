@@ -1,9 +1,10 @@
 import { Colors } from '@/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
-import React, { useCallback, useMemo, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   FlatList,
   Image,
   RefreshControl,
@@ -13,583 +14,517 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  useColorScheme
+  useColorScheme,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import socketService from '../lib/socket';
 
+// Định nghĩa type cho Conversation
 type Conversation = {
   id: string;
   name: string;
-  avatar: string | null;
+  avatar?: string;
   lastMessage: string;
   timestamp: string;
   unreadCount: number;
   status: 'online' | 'offline' | 'away' | null;
   type: 'private' | 'group';
   members?: number;
+  lastMessageTime: string;
 };
 
-const MOCK_CONVERSATIONS: Conversation[] = [
-  {
-    id: '1',
-    name: 'Nguyễn Văn A',
-    avatar: null,
-    lastMessage: 'Chào bạn, khỏe không?',
-    timestamp: '5 phút',
-    unreadCount: 2,
-    status: 'online',
-    type: 'private',
-  },
-  {
-    id: '2',
-    name: 'Trần Thị B',
-    avatar: null,
-    lastMessage: 'Hẹn gặp bạn lúc 3h',
-    timestamp: '1 giờ',
-    unreadCount: 0,
-    status: 'offline',
-    type: 'private',
-  },
-  {
-    id: '3',
-    name: 'Nhóm BizChat',
-    avatar: null,
-    lastMessage: 'Bạn đã được thêm vào nhóm',
-    timestamp: '2 giờ',
-    unreadCount: 5,
-    status: null,
-    type: 'group',
-    members: 8,
-  },
-  {
-    id: '4',
-    name: 'Lê Văn C',
-    avatar: null,
-    lastMessage: 'Ok, tôi sẽ gửi file cho bạn',
-    timestamp: 'hôm qua',
-    unreadCount: 0,
-    status: 'away',
-    type: 'private',
-  },
-  {
-    id: '5',
-    name: 'Phòng Kỹ thuật',
-    avatar: null,
-    lastMessage: 'Họp lúc 10h sáng mai',
-    timestamp: 'hôm qua',
-    unreadCount: 1,
-    status: null,
-    type: 'group',
-    members: 12,
-  },
-];
+const HomeScreen = () => {
+  const router = useRouter();
+  const scheme = useColorScheme();
+  const colors = Colors['light'];
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
-// Màu avatar dựa trên tên
-const AVATAR_COLORS = ['#667eea', '#764ba2', '#f093fb', '#4facfe', '#43e97b', '#fa709a', '#fee140'];
-const getAvatarColor = (name: string) => AVATAR_COLORS[name.charCodeAt(0) % AVATAR_COLORS.length];
-
-const ConversationItem = React.memo(({
-  item,
-  onPress,
-}: {
-  item: Conversation;
-  onPress: () => void;
-}) => {
-  const formatTimestamp = (ts: string) => {
-    if (ts === 'hôm qua') return 'Hôm qua';
-    return ts;
+  // Fetch current user
+  const fetchCurrentUser = async () => {
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      const response = await fetch('http://192.168.1.75:3001/api/auth/profile', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      setCurrentUser(data.user);
+    } catch (error) {
+      console.error('Fetch current user error:', error);
+    }
   };
 
-  const avatarColor = getAvatarColor(item.name);
-  const hasUnread = item.unreadCount > 0;
+  // Fetch conversations
+  const fetchConversations = async () => {
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      const response = await fetch('http://192.168.1.75:3001/api/chat/conversations', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      
+      // Format data từ API
+      const formatted = (data.conversations || []).map((conv: any) => ({
+        id: conv.id,
+        name: conv.name,
+        avatar: conv.avatar,
+        lastMessage: conv.lastMessage || 'Chưa có tin nhắn',
+        timestamp: formatTimeAgo(conv.lastActivity),
+        unreadCount: conv.unreadCount || 0,
+        status: conv.status || null,
+        type: conv.type,
+        members: conv.members,
+        lastMessageTime: conv.lastActivity
+      }));
+      
+      setConversations(formatted);
+    } catch (error) {
+      console.error('Fetch conversations error:', error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
 
-  return (
-    <TouchableOpacity style={styles.item} onPress={onPress} activeOpacity={0.6}>
+  // Format thời gian
+  const formatTimeAgo = (dateString: string) => {
+    if (!dateString) return '';
+    
+    const date = new Date(dateString);
+    const now = new Date();
+    const diff = Math.floor((now.getTime() - date.getTime()) / 1000); // seconds
+    
+    if (diff < 60) return 'Vừa xong';
+    if (diff < 3600) return `${Math.floor(diff / 60)} phút`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)} giờ`;
+    if (diff < 604800) return `${Math.floor(diff / 86400)} ngày`;
+    
+    return date.toLocaleDateString('vi-VN');
+  };
+
+  // Refresh data
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchConversations();
+  }, []);
+
+  // Lắng nghe tin nhắn mới qua socket
+  useEffect(() => {
+    const socket = socketService.getSocket();
+    if (socket) {
+      socket.on('receive_message', (data: any) => {
+        // Cập nhật conversation khi có tin nhắn mới
+        fetchConversations();
+      });
+
+      socket.on('user_status_change', (data: any) => {
+        // Cập nhật status khi user online/offline
+        setConversations(prev => prev.map(conv => 
+          conv.type === 'private' && conv.id === data.userId
+            ? { ...conv, status: data.status }
+            : conv
+        ));
+      });
+    }
+
+    return () => {
+      if (socket) {
+        socket.off('receive_message');
+        socket.off('user_status_change');
+      }
+    };
+  }, []);
+
+  // Load data khi focus vào màn hình
+  useFocusEffect(
+    useCallback(() => {
+      fetchCurrentUser();
+      fetchConversations();
+    }, [])
+  );
+
+  // Filter conversations
+  const filteredConversations = conversations.filter(conv =>
+    conv.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  // Render conversation item
+  const renderConversation = ({ item }: { item: Conversation }) => (
+    <TouchableOpacity
+      style={[styles.conversationItem, { borderBottomColor: colors.borderColor }]}
+      onPress={() => router.push(`/chat/${item.id}?type=${item.type}`)}
+      activeOpacity={0.7}
+    >
       {/* Avatar */}
-      <View style={styles.avatarWrap}>
+      <View style={styles.avatarContainer}>
         {item.avatar ? (
-          <Image source={{ uri: item.avatar }} style={styles.avatarImg} />
+          <Image source={{ uri: item.avatar }} style={styles.avatar} />
         ) : (
-          <LinearGradient
-            colors={[avatarColor, avatarColor + 'bb']}
-            style={styles.avatarGrad}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-          >
-            <Text style={styles.avatarLetter}>{item.name.charAt(0).toUpperCase()}</Text>
-          </LinearGradient>
+          <View style={[styles.avatar, { backgroundColor: colors.tint + '20' }]}>
+            <Text style={[styles.avatarText, { color: colors.tint }]}>
+              {item.name.charAt(0).toUpperCase()}
+            </Text>
+          </View>
         )}
-
-        {/* Status */}
-        {item.type === 'private' && item.status === 'online' && (
-          <View style={styles.onlineDot} />
+        
+        {/* Status dot - chỉ cho private chat */}
+        {item.type === 'private' && item.status && (
+          <View
+            style={[
+              styles.statusDot,
+              {
+                backgroundColor:
+                  item.status === 'online'
+                    ? colors.onlineStatus
+                    : item.status === 'away'
+                    ? colors.warning
+                    : colors.offlineStatus,
+                borderColor: colors.background,
+              },
+            ]}
+          />
         )}
+        
+        {/* Group badge */}
         {item.type === 'group' && (
-          <View style={styles.groupBadge}>
-            <Ionicons name="people" size={9} color="#fff" />
+          <View style={[styles.groupBadge, { 
+            backgroundColor: colors.secondaryTint,
+            borderColor: colors.background,
+          }]}>
+            <Ionicons name="people" size={10} color="#fff" />
           </View>
         )}
       </View>
 
       {/* Content */}
-      <View style={styles.itemBody}>
-        <View style={styles.itemTop}>
-          <Text style={[styles.itemName, hasUnread && styles.itemNameBold]} numberOfLines={1}>
+      <View style={styles.conversationContent}>
+        <View style={styles.conversationHeader}>
+          <Text style={[styles.conversationName, { color: colors.text }]} numberOfLines={1}>
             {item.name}
           </Text>
-          <Text style={[styles.itemTime, hasUnread && styles.itemTimePurple]}>
-            {formatTimestamp(item.timestamp)}
+          <Text style={[styles.timestamp, { color: colors.textSecondary }]}>
+            {item.timestamp}
           </Text>
         </View>
 
-        <View style={styles.itemBottom}>
-          <Text style={[styles.itemMsg, hasUnread && styles.itemMsgDark]} numberOfLines={1}>
+        <View style={styles.conversationFooter}>
+          <Text style={[styles.lastMessage, { color: colors.textSecondary }]} numberOfLines={1}>
             {item.lastMessage}
           </Text>
-          {hasUnread ? (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>
-                {item.unreadCount > 99 ? '99+' : item.unreadCount}
-              </Text>
-            </View>
-          ) : item.type === 'group' && item.members ? (
-            <View style={styles.memberPill}>
-              <Ionicons name="person-outline" size={10} color="#aaa" />
-              <Text style={styles.memberText}>{item.members}</Text>
-            </View>
-          ) : null}
+          
+          <View style={styles.rightFooter}>
+            {item.type === 'group' && item.members && (
+              <View style={styles.memberCount}>
+                <Ionicons name="person-outline" size={12} color={colors.textSecondary} />
+                <Text style={[styles.memberCountText, { color: colors.textSecondary }]}>
+                  {item.members}
+                </Text>
+              </View>
+            )}
+            
+            {item.unreadCount > 0 && (
+              <View style={[styles.unreadBadge, { backgroundColor: colors.tint }]}>
+                <Text style={styles.unreadText}>
+                  {item.unreadCount > 99 ? '99+' : item.unreadCount}
+                </Text>
+              </View>
+            )}
+          </View>
         </View>
       </View>
     </TouchableOpacity>
   );
-});
 
-const ListHeader = React.memo(({
-  searchQuery,
-  onSearchChange,
-  onNewChat,
-}: {
-  searchQuery: string;
-  onSearchChange: (t: string) => void;
-  onNewChat: () => void;
-}) => (
-  <View>
-    {/* Header */}
-    <LinearGradient
-      colors={['#667eea', '#764ba2']}
-      style={styles.header}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-    >
-      {/* Decorative circles */}
-      <View style={styles.deco1} />
-      <View style={styles.deco2} />
-
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.headerSub}>BizChat</Text>
-          <Text style={styles.headerTitle}>Tin nhắn</Text>
-        </View>
-        <TouchableOpacity style={styles.newBtn} onPress={onNewChat}>
-          <Ionicons name="create-outline" size={20} color="#fff" />
+  // Header với search bar
+  const renderHeader = () => (
+    <View style={[styles.header, { backgroundColor: colors.background }]}>
+      <View style={styles.headerTop}>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>BizChat</Text>
+        <TouchableOpacity 
+          onPress={() => router.push('/profile')}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          {currentUser?.avatar ? (
+            <Image source={{ uri: currentUser.avatar }} style={styles.headerAvatar} />
+          ) : (
+            <View style={[styles.headerAvatar, { backgroundColor: colors.tint + '20' }]}>
+              <Text style={[styles.headerAvatarText, { color: colors.tint }]}>
+                {currentUser?.name?.charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          )}
         </TouchableOpacity>
       </View>
 
-      {/* Search inside gradient */}
-      <View style={styles.searchBox}>
-        <Ionicons name="search-outline" size={16} color="#667eea" />
+      {/* Search Bar */}
+      <View style={[styles.searchContainer, { backgroundColor: colors.backgroundElement }]}>
+        <Ionicons name="search" size={20} color={colors.textSecondary} />
         <TextInput
-          style={styles.searchInput}
-          placeholder="Tìm kiếm..."
-          placeholderTextColor="#bbb"
+          style={[styles.searchInput, { color: colors.text }]}
+          placeholder="Tìm kiếm cuộc trò chuyện..."
+          placeholderTextColor={colors.textSecondary}
           value={searchQuery}
-          onChangeText={onSearchChange}
-          returnKeyType="search"
-          clearButtonMode="while-editing"
+          onChangeText={setSearchQuery}
         />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity onPress={() => setSearchQuery('')}>
+            <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
+        )}
       </View>
-    </LinearGradient>
-
-    {/* Section label */}
-    {!searchQuery && (
-      <Text style={styles.sectionLabel}>Gần đây</Text>
-    )}
-  </View>
-));
-
-const EmptyState = React.memo(({
-  searchQuery,
-  onStartChat,
-}: {
-  searchQuery: string;
-  onStartChat: () => void;
-}) => (
-  <View style={styles.empty}>
-    <View style={styles.emptyIcon}>
-      <Ionicons
-        name={searchQuery ? 'search-outline' : 'chatbubble-ellipses-outline'}
-        size={40}
-        color="#667eea"
-      />
     </View>
-    <Text style={styles.emptyTitle}>
-      {searchQuery ? 'Không tìm thấy kết quả' : 'Chưa có tin nhắn'}
-    </Text>
-    <Text style={styles.emptyDesc}>
-      {searchQuery
-        ? `Không có cuộc trò chuyện nào với "${searchQuery}"`
-        : 'Bắt đầu trò chuyện với bạn bè và đồng nghiệp'}
-    </Text>
-    {!searchQuery && (
-      <TouchableOpacity style={styles.emptyBtn} onPress={onStartChat} activeOpacity={0.85}>
-        <LinearGradient colors={['#667eea', '#764ba2']} style={styles.emptyBtnGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
-          <Ionicons name="add" size={18} color="#fff" />
-          <Text style={styles.emptyBtnText}>Tạo cuộc trò chuyện</Text>
-        </LinearGradient>
-      </TouchableOpacity>
-    )}
-  </View>
-));
+  );
 
-const Index = () => {
-  const router = useRouter();
-  const scheme = useColorScheme();
-  const colors = Colors['light'];
-  const [refreshing, setRefreshing] = useState(false);
-  const [conversations] = useState<Conversation[]>(MOCK_CONVERSATIONS);
-  const [searchQuery, setSearchQuery] = useState('');
+  // Empty state
+  const renderEmpty = () => (
+    <View style={styles.emptyContainer}>
+      <Ionicons 
+        name={searchQuery ? "search-outline" : "chatbubbles-outline"} 
+        size={60} 
+        color={colors.textSecondary} 
+      />
+      <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+        {searchQuery 
+          ? `Không tìm thấy "${searchQuery}"`
+          : 'Chưa có cuộc trò chuyện nào'}
+      </Text>
+      {!searchQuery && (
+        <TouchableOpacity
+          style={[styles.startButton, { backgroundColor: colors.tint }]}
+          onPress={() => router.push('/contacts')}
+        >
+          <Text style={styles.startButtonText}>Bắt đầu chat mới</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
 
-  const filtered = useMemo(() => {
-    if (!searchQuery.trim()) return conversations;
-    return conversations.filter(c =>
-      c.name.toLowerCase().includes(searchQuery.toLowerCase().trim())
+  if (loading && !refreshing) {
+    return (
+      <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.tint} />
+      </View>
     );
-  }, [conversations, searchQuery]);
-
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 1500);
-  }, []);
-
-  const navigateToChat = useCallback((item: Conversation) => {
-    // router.push({ pathname: '/chat/[id]', params: { id: item.id } });
-  }, []);
-
-  const renderItem = useCallback(({ item }: { item: Conversation }) => (
-    <ConversationItem item={item} onPress={() => navigateToChat(item)} />
-  ), [navigateToChat]);
-
-  const renderSeparator = useCallback(() => <View style={styles.separator} />, []);
+  }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <StatusBar barStyle="light-content" />
-
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+      <StatusBar barStyle={scheme === 'dark' ? 'light-content' : 'dark-content'} />
+      
       <FlatList
-        data={filtered}
+        data={filteredConversations}
         keyExtractor={(item) => item.id}
-        renderItem={renderItem}
-        ItemSeparatorComponent={renderSeparator}
-        ListHeaderComponent={
-          <ListHeader
-            searchQuery={searchQuery}
-            onSearchChange={setSearchQuery}
-            onNewChat={() => router.push('/contacts')}
-          />
-        }
-        ListEmptyComponent={
-          <EmptyState
-            searchQuery={searchQuery}
-            onStartChat={() => router.push('/contacts')}
-          />
-        }
-        showsVerticalScrollIndicator={false}
+        renderItem={renderConversation}
+        ListHeaderComponent={renderHeader}
+        ListEmptyComponent={renderEmpty}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor="#667eea"
+            colors={[colors.tint]}
+            tintColor={colors.tint}
           />
         }
-        initialNumToRender={10}
-        maxToRenderPerBatch={10}
-        windowSize={5}
-        removeClippedSubviews={true}
-        contentContainerStyle={filtered.length === 0 ? { flex: 1 } : { paddingBottom: 32 }}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={filteredConversations.length === 0 ? { flex: 1 } : undefined}
       />
+
+      {/* FAB */}
+      {!searchQuery && (
+        <TouchableOpacity
+          style={[styles.fab, { backgroundColor: colors.tint }]}
+          onPress={() => router.push('/contacts')}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="chatbubble" size={24} color="#fff" />
+        </TouchableOpacity>
+      )}
     </SafeAreaView>
   );
 };
 
-export default Index;
+export default HomeScreen;
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
   },
-
-  // ─── Header ────────────────────────────────────────────────
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 28,
-    overflow: 'hidden',
-  },
-  deco1: {
-    position: 'absolute',
-    top: -40,
-    right: -30,
-    width: 160,
-    height: 160,
-    borderRadius: 80,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  deco2: {
-    position: 'absolute',
-    bottom: -20,
-    left: 60,
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-  },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 20,
-  },
-  headerSub: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.7)',
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
-    marginBottom: 4,
-  },
-  headerTitle: {
-    fontSize: 30,
-    fontWeight: '700',
-    color: '#fff',
-    letterSpacing: -0.5,
-  },
-  newBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+  centerContent: {
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)',
   },
-  searchBox: {
+  header: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 16,
+  },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  headerTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+  },
+  headerAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerAvatarText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#fff',
-    borderRadius: 14,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     height: 44,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 6,
+    borderRadius: 22,
+    gap: 8,
   },
   searchInput: {
     flex: 1,
-    fontSize: 14,
-    color: '#333',
+    fontSize: 16,
     padding: 0,
   },
-
-  // ─── Section label ─────────────────────────────────────────
-  sectionLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#aaa',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-    marginHorizontal: 20,
-    marginTop: 20,
-    marginBottom: 8,
-  },
-
-  // ─── Conversation item ─────────────────────────────────────
-  item: {
+  conversationItem: {
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
+    padding: 16,
+    borderBottomWidth: 1,
   },
-  separator: {
-    height: 1,
-    backgroundColor: '#f5f5f5',
-    marginLeft: 88,
-  },
-  avatarWrap: {
+  avatarContainer: {
     position: 'relative',
-    marginRight: 14,
+    marginRight: 12,
   },
-  avatarGrad: {
-    width: 54,
-    height: 54,
-    borderRadius: 18,
+  avatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  avatarImg: {
-    width: 54,
-    height: 54,
-    borderRadius: 18,
+  avatarText: {
+    fontSize: 24,
+    fontWeight: 'bold',
   },
-  avatarLetter: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  onlineDot: {
+  statusDot: {
     position: 'absolute',
-    bottom: 1,
-    right: 1,
+    bottom: 2,
+    right: 2,
     width: 14,
     height: 14,
     borderRadius: 7,
-    backgroundColor: '#22c55e',
-    borderWidth: 2.5,
-    borderColor: '#fff',
+    borderWidth: 2,
   },
   groupBadge: {
     position: 'absolute',
-    bottom: 1,
-    right: 1,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: '#764ba2',
+    top: -2,
+    right: -2,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
-    borderColor: '#fff',
   },
-  itemBody: {
+  conversationContent: {
     flex: 1,
-    gap: 4,
+    justifyContent: 'center',
   },
-  itemTop: {
+  conversationHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 4,
   },
-  itemName: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: '#222',
-    flex: 1,
-    marginRight: 8,
-  },
-  itemNameBold: {
-    fontWeight: '700',
-    color: '#111',
-  },
-  itemTime: {
-    fontSize: 12,
-    color: '#bbb',
-  },
-  itemTimePurple: {
-    color: '#667eea',
+  conversationName: {
+    fontSize: 16,
     fontWeight: '600',
+    flex: 1,
+    marginRight: 8,
   },
-  itemBottom: {
+  timestamp: {
+    fontSize: 12,
+  },
+  conversationFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  itemMsg: {
-    fontSize: 13,
-    color: '#bbb',
+  lastMessage: {
+    fontSize: 14,
     flex: 1,
     marginRight: 8,
   },
-  itemMsgDark: {
-    color: '#666',
-    fontWeight: '500',
-  },
-  badge: {
-    minWidth: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#667eea',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 5,
-  },
-  badgeText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  memberPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-  },
-  memberText: {
-    fontSize: 11,
-    color: '#ccc',
-  },
-
-  // ─── Empty State ───────────────────────────────────────────
-  empty: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 40,
-    paddingBottom: 60,
-  },
-  emptyIcon: {
-    width: 88,
-    height: 88,
-    borderRadius: 28,
-    backgroundColor: '#f0f4ff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#222',
-    marginBottom: 8,
-  },
-  emptyDesc: {
-    fontSize: 14,
-    color: '#aaa',
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 28,
-  },
-  emptyBtn: {
-    borderRadius: 14,
-    overflow: 'hidden',
-    shadowColor: '#667eea',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    elevation: 6,
-  },
-  emptyBtnGrad: {
+  rightFooter: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 24,
-    paddingVertical: 14,
   },
-  emptyBtnText: {
+  memberCount: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  memberCountText: {
+    fontSize: 11,
+  },
+  unreadBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+  },
+  unreadText: {
     color: '#fff',
-    fontSize: 15,
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  emptyText: {
+    fontSize: 16,
+    textAlign: 'center',
+    marginTop: 16,
+    marginBottom: 24,
+  },
+  startButton: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 24,
+  },
+  startButtonText: {
+    color: '#fff',
+    fontSize: 16,
     fontWeight: '600',
+  },
+  fab: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 8,
   },
 });

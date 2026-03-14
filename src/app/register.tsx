@@ -61,7 +61,7 @@ export default function RegisterScreen() {
 
   const handleGoogleLogin = async (idToken: string) => {
     try {
-      const res = await fetch('http://192.168.1.33:3001/api/auth/google', {
+      const res = await fetch('http://192.168.1.75:3001/api/auth/google', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: idToken })
