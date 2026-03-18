@@ -45,8 +45,8 @@ const fetchUsers = async () => {
       console.log('🔑 Token gốc:', token);
     
     const url = filter === 'online' 
-      ? 'http://192.168.1.75:3001/api/users/online'
-      : `http://192.168.1.75:3001/api/users${searchQuery ? `?search=${searchQuery}` : ''}`;
+      ? 'http://103.82.25.230:3001/api/users/online'
+      : `http://103.82.25.230:3001/api/users${searchQuery ? `?search=${searchQuery}` : ''}`;
     
     console.log('📡 Fetching from:', url); // Debug URL
     

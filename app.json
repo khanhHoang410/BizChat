@@ -9,7 +9,7 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "bundleIdentifier": "com.khanhgold.bizchatapp",
-      "infoPlist": {
+     "infoPlist": {
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
@@ -17,7 +17,10 @@
               "com.googleusercontent.apps.296490459621-jsbtmljnv158ql755gflgakucomafqs6"
             ]
           }
-        ]
+        ],
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
       },
       "appleTeamId": "X6F5T296SH"
     },

@@ -45,7 +45,7 @@ const ProfileScreen = () => {
   const fetchUserProfile = async () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
-      const response = await fetch('http://192.168.1.75:3001/api/auth/profile', {
+      const response = await fetch('http://103.82.25.230:3001/api/auth/profile', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
@@ -70,7 +70,7 @@ const ProfileScreen = () => {
     setSaving(true);
     try {
       const token = await AsyncStorage.getItem('userToken');
-      const response = await fetch('http://192.168.1.75:3001/api/users/profile', {
+      const response = await fetch('http://103.82.25.230:3001/api/users/profile', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -107,7 +107,7 @@ const ProfileScreen = () => {
           onPress: async () => {
             try {
               const token = await AsyncStorage.getItem('userToken');
-              await fetch('http://192.168.1.75:3001/api/auth/logout', {
+              await fetch('http://103.82.25.230:3001/api/auth/logout', {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}` }
               });

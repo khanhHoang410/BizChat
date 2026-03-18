@@ -47,7 +47,7 @@ const HomeScreen = () => {
   const fetchCurrentUser = async () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
-      const response = await fetch('http://192.168.1.75:3001/api/auth/profile', {
+      const response = await fetch('http://103.82.25.230:3001/api/auth/profile', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
@@ -61,7 +61,7 @@ const HomeScreen = () => {
   const fetchConversations = async () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
-      const response = await fetch('http://192.168.1.75:3001/api/chat/conversations', {
+      const response = await fetch('http://103.82.25.230:3001/api/chat/conversations', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();

@@ -5,7 +5,7 @@ class SocketService {
   private socket: Socket | null = null;
 
   connect() {
-    this.socket = io('http://192.168.1.75:3001', {
+    this.socket = io('http://103.82.25.230:3001', {
       transports: ['websocket'],
       autoConnect: true,
     });
