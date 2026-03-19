@@ -294,12 +294,13 @@ const ChatDetailScreen = () => {
       formData.append('file', { uri: asset.uri, type: asset.mimeType || 'image/jpeg', name: `photo_${Date.now()}.jpg` } as any);
       formData.append('receiverId', id as string);
 
-      const uploadRes = await fetch(`${BASE_URL}/api/chat/upload/image`, {
+     const uploadRes = await fetch(`${BASE_URL}/api/chat/upload/image`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
       const uploadData = await uploadRes.json();
+      console.log('📤 Upload image response:', uploadRes.status, uploadData); // ← THÊM
       const imageUrl = uploadData.file?.url || asset.uri;
 
       setMessages(prev => prev.map(m =>
@@ -368,6 +369,7 @@ const ChatDetailScreen = () => {
         body: formData,
       });
       const uploadData = await uploadRes.json();
+      console.log('📤 Upload file response:', uploadRes.status, uploadData); // ← THÊM
       const fileUrl = uploadData.file?.url || '';
 
       setMessages(prev => prev.map(m =>
