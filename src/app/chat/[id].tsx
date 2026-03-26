@@ -8,10 +8,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   FlatList,
   Image,
   KeyboardAvoidingView,
   Linking,
+  Modal,
   Platform,
   ScrollView,
   StatusBar,
@@ -19,11 +21,14 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   View,
   useColorScheme,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import socketService from '../lib/socket';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 type Message = {
   _id: string;
@@ -42,7 +47,10 @@ type UserInfo = {
   status: 'online' | 'offline' | 'away';
 };
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
 const BASE_URL = 'http://103.82.25.230:3001';
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const EMOJI_CATEGORIES = [
   { label: 'Phổ biến', icon: '⭐', emojis: ['😀','😂','🥰','😍','🤩','😎','🥳','😅','🤣','😭','😤','😡','🥺','😢','😮','🤔','🤫','🤭','😏','😒'] },
@@ -50,6 +58,8 @@ const EMOJI_CATEGORIES = [
   { label: 'Tay', icon: '👋', emojis: ['👋','🤚','🖐️','✋','🖖','👌','🤌','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','👇','☝️','👍','👎','✊'] },
   { label: 'Trái tim', icon: '❤️', emojis: ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','♥️'] },
 ];
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 const ChatDetailScreen = () => {
   const { id, type } = useLocalSearchParams<{ id: string; type: string }>();
@@ -75,6 +85,13 @@ const ChatDetailScreen = () => {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [emojiCategoryIndex, setEmojiCategoryIndex] = useState(0);
+
+  // ← MỚI: Image viewer
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+
+  // ← MỚI: Message options (xóa)
+  const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
+  const [showMessageOptions, setShowMessageOptions] = useState(false);
 
   const getToken = () => AsyncStorage.getItem('userToken');
 
@@ -185,7 +202,7 @@ const ChatDetailScreen = () => {
         })));
       }
     });
-    socket.on('message_error', (data: { error: string }) => {
+    socket.on('message_error', () => {
       setMessages(prev => prev.filter(msg => !msg._id.startsWith('temp_')));
     });
     socket.on('message_sent', (data: { messageId: string }) => {
@@ -294,13 +311,12 @@ const ChatDetailScreen = () => {
       formData.append('file', { uri: asset.uri, type: asset.mimeType || 'image/jpeg', name: `photo_${Date.now()}.jpg` } as any);
       formData.append('receiverId', id as string);
 
-     const uploadRes = await fetch(`${BASE_URL}/api/chat/upload/image`, {
+      const uploadRes = await fetch(`${BASE_URL}/api/chat/upload/image`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
       const uploadData = await uploadRes.json();
-      console.log('📤 Upload image response:', uploadRes.status, uploadData); // ← THÊM
       const imageUrl = uploadData.file?.url || asset.uri;
 
       setMessages(prev => prev.map(m =>
@@ -369,7 +385,6 @@ const ChatDetailScreen = () => {
         body: formData,
       });
       const uploadData = await uploadRes.json();
-      console.log('📤 Upload file response:', uploadRes.status, uploadData); // ← THÊM
       const fileUrl = uploadData.file?.url || '';
 
       setMessages(prev => prev.map(m =>
@@ -391,6 +406,41 @@ const ChatDetailScreen = () => {
       Alert.alert('Lỗi', 'Không thể gửi file!');
     } finally {
       setUploadingFile(false);
+    }
+  };
+
+  // ─── MỚI: Xóa tin nhắn ───────────────────────────────────────────────────
+
+  const handleLongPressMessage = (message: Message) => {
+    // Chỉ cho xóa tin nhắn của mình
+    if (message.sender._id !== currentUser?._id) return;
+    if (message._id.startsWith('temp_')) return; // không xóa temp message
+    setSelectedMessage(message);
+    setShowMessageOptions(true);
+  };
+
+  const deleteMessage = async () => {
+    if (!selectedMessage) return;
+    setShowMessageOptions(false);
+
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/api/chat/${selectedMessage._id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.ok) {
+        // Xóa khỏi local state
+        setMessages(prev => prev.filter(m => m._id !== selectedMessage._id));
+      } else {
+        Alert.alert('Lỗi', 'Không thể xóa tin nhắn!');
+      }
+    } catch (e) {
+      console.error('Delete message error:', e);
+      Alert.alert('Lỗi', 'Không thể xóa tin nhắn!');
+    } finally {
+      setSelectedMessage(null);
     }
   };
 
@@ -426,11 +476,7 @@ const ChatDetailScreen = () => {
 
   const renderAttachMenu = () => (
     <View style={[styles.attachMenu, { backgroundColor: colors.background, borderTopColor: colors.borderColor }]}>
-      <TouchableOpacity
-        style={styles.attachMenuItem}
-        onPress={pickAndSendImage}
-        disabled={uploadingImage}
-      >
+      <TouchableOpacity style={styles.attachMenuItem} onPress={pickAndSendImage} disabled={uploadingImage}>
         {uploadingImage
           ? <ActivityIndicator size={28} color="#4CAF50" />
           : <View style={[styles.attachMenuIcon, { backgroundColor: '#4CAF50' + '20' }]}>
@@ -440,11 +486,7 @@ const ChatDetailScreen = () => {
         <Text style={[styles.attachMenuLabel, { color: colors.text }]}>Ảnh</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity
-        style={styles.attachMenuItem}
-        onPress={pickAndSendFile}
-        disabled={uploadingFile}
-      >
+      <TouchableOpacity style={styles.attachMenuItem} onPress={pickAndSendFile} disabled={uploadingFile}>
         {uploadingFile
           ? <ActivityIndicator size={28} color="#2196F3" />
           : <View style={[styles.attachMenuIcon, { backgroundColor: '#2196F3' + '20' }]}>
@@ -473,89 +515,193 @@ const ChatDetailScreen = () => {
     const fileAttachment = item.type === 'file' ? item.attachments?.[0] : null;
 
     return (
-      <View style={[styles.messageRow, isMyMessage ? styles.myMessageRow : styles.otherMessageRow]}>
-        {!isMyMessage && (
-          <View style={styles.avatarContainer}>
-            {showAvatar ? (
-              item.sender.avatar
-                ? <Image source={{ uri: item.sender.avatar }} style={styles.avatar} />
-                : (
-                  <View style={[styles.avatar, { backgroundColor: colors.tint + '20' }]}>
-                    <Text style={[styles.avatarText, { color: colors.tint }]}>
-                      {item.sender.name.charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                )
-            ) : <View style={styles.avatarPlaceholder} />}
-          </View>
-        )}
-
-        <View style={[
-          styles.messageBubble,
-          isMyMessage ? styles.myMessage : styles.otherMessage,
-          (imageAttachment || fileAttachment) ? styles.mediaBubble : null,
-          { backgroundColor: isMyMessage ? colors.tint : colors.backgroundElement },
-        ]}>
-          {imageAttachment ? (
-            // ── Ảnh ──
-            <View>
-              <Image source={{ uri: imageAttachment.url }} style={styles.messageImage} resizeMode="cover" />
-              {isTemp && uploadingImage && (
-                <View style={styles.mediaOverlay}>
-                  <ActivityIndicator color="#fff" />
-                </View>
-              )}
+      <TouchableOpacity
+        activeOpacity={0.85}
+        onLongPress={() => handleLongPressMessage(item)}
+        delayLongPress={400}
+      >
+        <View style={[styles.messageRow, isMyMessage ? styles.myMessageRow : styles.otherMessageRow]}>
+          {!isMyMessage && (
+            <View style={styles.avatarContainer}>
+              {showAvatar ? (
+                item.sender.avatar
+                  ? <Image source={{ uri: item.sender.avatar }} style={styles.avatar} />
+                  : (
+                    <View style={[styles.avatar, { backgroundColor: colors.tint + '20' }]}>
+                      <Text style={[styles.avatarText, { color: colors.tint }]}>
+                        {item.sender.name.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                  )
+              ) : <View style={styles.avatarPlaceholder} />}
             </View>
-          ) : fileAttachment ? (
-            // ── File ──
-            <TouchableOpacity
-              style={styles.fileBubble}
-              onPress={() => fileAttachment.url && Linking.openURL(fileAttachment.url)}
-              disabled={!fileAttachment.url}
-            >
-              <View style={[styles.fileIcon, { backgroundColor: isMyMessage ? 'rgba(255,255,255,0.2)' : colors.tint + '20' }]}>
-                <Ionicons name="document-outline" size={24} color={isMyMessage ? '#fff' : colors.tint} />
-              </View>
-              <View style={styles.fileInfo}>
-                <Text style={[styles.fileName, { color: isMyMessage ? '#fff' : colors.text }]} numberOfLines={2}>
-                  {fileAttachment.name}
-                </Text>
-                {!fileAttachment.url && isTemp && (
-                  <Text style={{ color: isMyMessage ? 'rgba(255,255,255,0.6)' : colors.textSecondary, fontSize: 11 }}>
-                    Đang tải lên...
-                  </Text>
-                )}
-              </View>
-              {!fileAttachment.url && isTemp
-                ? <ActivityIndicator size={16} color={isMyMessage ? '#fff' : colors.tint} />
-                : <Ionicons name="download-outline" size={20} color={isMyMessage ? 'rgba(255,255,255,0.8)' : colors.tint} />
-              }
-            </TouchableOpacity>
-          ) : (
-            // ── Text ──
-            <Text style={[styles.messageText, { color: isMyMessage ? '#fff' : colors.text }]}>
-              {item.content}
-            </Text>
           )}
 
-          <View style={styles.messageFooter}>
-            <Text style={[styles.messageTime, { color: isMyMessage ? 'rgba(255,255,255,0.6)' : colors.textSecondary }]}>
-              {formatTime(item.createdAt)}
-            </Text>
-            {isMyMessage && (
-              isTemp
-                ? <ActivityIndicator size={12} color="rgba(255,255,255,0.6)" />
-                : <Ionicons
-                    name={isReadByOther ? 'checkmark-done' : 'checkmark'}
-                    size={16}
-                    color={isReadByOther ? '#4FC3F7' : 'rgba(255,255,255,0.6)'}
-                  />
+          <View style={[
+            styles.messageBubble,
+            isMyMessage ? styles.myMessage : styles.otherMessage,
+            (imageAttachment || fileAttachment) ? styles.mediaBubble : null,
+            { backgroundColor: isMyMessage ? colors.tint : colors.backgroundElement },
+          ]}>
+            {imageAttachment ? (
+              // ── Ảnh — nhấn để xem full screen ──
+              <TouchableOpacity
+                onPress={() => imageAttachment.url && setSelectedImage(imageAttachment.url)}
+                activeOpacity={0.9}
+              >
+                <Image source={{ uri: imageAttachment.url }} style={styles.messageImage} resizeMode="cover" />
+                {isTemp && uploadingImage && (
+                  <View style={styles.mediaOverlay}>
+                    <ActivityIndicator color="#fff" />
+                  </View>
+                )}
+              </TouchableOpacity>
+            ) : fileAttachment ? (
+              // ── File — nhấn để mở ──
+              <TouchableOpacity
+                style={styles.fileBubble}
+                onPress={() => fileAttachment.url && Linking.openURL(fileAttachment.url)}
+                disabled={!fileAttachment.url}
+              >
+                <View style={[styles.fileIcon, { backgroundColor: isMyMessage ? 'rgba(255,255,255,0.2)' : colors.tint + '20' }]}>
+                  <Ionicons name="document-outline" size={24} color={isMyMessage ? '#fff' : colors.tint} />
+                </View>
+                <View style={styles.fileInfo}>
+                  <Text style={[styles.fileName, { color: isMyMessage ? '#fff' : colors.text }]} numberOfLines={2}>
+                    {fileAttachment.name}
+                  </Text>
+                  {!fileAttachment.url && isTemp && (
+                    <Text style={{ color: isMyMessage ? 'rgba(255,255,255,0.6)' : colors.textSecondary, fontSize: 11 }}>
+                      Đang tải lên...
+                    </Text>
+                  )}
+                </View>
+                {!fileAttachment.url && isTemp
+                  ? <ActivityIndicator size={16} color={isMyMessage ? '#fff' : colors.tint} />
+                  : <Ionicons name="download-outline" size={20} color={isMyMessage ? 'rgba(255,255,255,0.8)' : colors.tint} />
+                }
+              </TouchableOpacity>
+            ) : (
+              // ── Text ──
+              <Text style={[styles.messageText, { color: isMyMessage ? '#fff' : colors.text }]}>
+                {item.content}
+              </Text>
             )}
+
+            <View style={styles.messageFooter}>
+              <Text style={[styles.messageTime, { color: isMyMessage ? 'rgba(255,255,255,0.6)' : colors.textSecondary }]}>
+                {formatTime(item.createdAt)}
+              </Text>
+              {isMyMessage && (
+                isTemp
+                  ? <ActivityIndicator size={12} color="rgba(255,255,255,0.6)" />
+                  : <Ionicons
+                      name={isReadByOther ? 'checkmark-done' : 'checkmark'}
+                      size={16}
+                      color={isReadByOther ? '#4FC3F7' : 'rgba(255,255,255,0.6)'}
+                    />
+              )}
+            </View>
           </View>
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
+
+  // ─── MỚI: Image Viewer Modal ──────────────────────────────────────────────
+
+  const renderImageViewer = () => (
+    <Modal
+      visible={!!selectedImage}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setSelectedImage(null)}
+    >
+      <View style={styles.imageViewerContainer}>
+        <TouchableWithoutFeedback onPress={() => setSelectedImage(null)}>
+          <View style={styles.imageViewerBg} />
+        </TouchableWithoutFeedback>
+
+        {/* Close button */}
+        <TouchableOpacity style={styles.imageViewerClose} onPress={() => setSelectedImage(null)}>
+          <Ionicons name="close" size={28} color="#fff" />
+        </TouchableOpacity>
+
+        {/* Image */}
+        {selectedImage && (
+          <Image
+            source={{ uri: selectedImage }}
+            style={styles.imageViewerImage}
+            resizeMode="contain"
+          />
+        )}
+
+        {/* Download button */}
+        {selectedImage && (
+          <TouchableOpacity
+            style={styles.imageViewerDownload}
+            onPress={() => Linking.openURL(selectedImage!)}
+          >
+            <Ionicons name="download-outline" size={24} color="#fff" />
+            <Text style={styles.imageViewerDownloadText}>Tải xuống</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </Modal>
+  );
+
+  // ─── MỚI: Message Options Modal (xóa tin nhắn) ───────────────────────────
+
+  const renderMessageOptions = () => (
+    <Modal
+      visible={showMessageOptions}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setShowMessageOptions(false)}
+    >
+      <TouchableWithoutFeedback onPress={() => setShowMessageOptions(false)}>
+        <View style={styles.optionsOverlay}>
+          <TouchableWithoutFeedback>
+            <View style={[styles.optionsContainer, { backgroundColor: colors.background }]}>
+              <Text style={[styles.optionsTitle, { color: colors.textSecondary }]}>
+                Tùy chọn tin nhắn
+              </Text>
+
+              <TouchableOpacity
+                style={styles.optionItem}
+                onPress={() => {
+                  setShowMessageOptions(false);
+                  Alert.alert(
+                    'Xóa tin nhắn',
+                    'Bạn có chắc muốn xóa tin nhắn này?',
+                    [
+                      { text: 'Hủy', style: 'cancel' },
+                      { text: 'Xóa', style: 'destructive', onPress: deleteMessage },
+                    ]
+                  );
+                }}
+              >
+                <View style={[styles.optionIcon, { backgroundColor: '#F44336' + '20' }]}>
+                  <Ionicons name="trash-outline" size={20} color="#F44336" />
+                </View>
+                <Text style={[styles.optionText, { color: '#F44336' }]}>Xóa tin nhắn</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.optionItem}
+                onPress={() => setShowMessageOptions(false)}
+              >
+                <View style={[styles.optionIcon, { backgroundColor: colors.backgroundElement }]}>
+                  <Ionicons name="close-outline" size={20} color={colors.text} />
+                </View>
+                <Text style={[styles.optionText, { color: colors.text }]}>Hủy</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableWithoutFeedback>
+        </View>
+      </TouchableWithoutFeedback>
+    </Modal>
+  );
 
   // ─── Loading ──────────────────────────────────────────────────────────────
 
@@ -575,13 +721,18 @@ const ChatDetailScreen = () => {
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
         <StatusBar barStyle={scheme === 'dark' ? 'light-content' : 'dark-content'} />
 
+        {/* Image Viewer Modal */}
+        {renderImageViewer()}
+
+        {/* Message Options Modal */}
+        {renderMessageOptions()}
+
         {/* Header */}
         <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.borderColor }]}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
 
-          {/* Nhấn vào header → mở màn hình info (Bước 2 sau) */}
           <TouchableOpacity
             style={styles.userInfo}
             onPress={() => router.push(`/chat/info/${id}` as any)}
@@ -634,7 +785,6 @@ const ChatDetailScreen = () => {
           keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
           <View style={[styles.inputContainer, { backgroundColor: colors.background, borderTopColor: colors.borderColor }]}>
-            {/* Nút attach — mở menu chọn ảnh/file */}
             <TouchableOpacity
               style={styles.attachButton}
               onPress={() => { setShowAttachMenu(prev => !prev); setShowEmojiPicker(false); }}
@@ -670,10 +820,7 @@ const ChatDetailScreen = () => {
             )}
           </View>
 
-          {/* Attach menu */}
           {showAttachMenu && renderAttachMenu()}
-
-          {/* Emoji picker */}
           {showEmojiPicker && renderEmojiPicker()}
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -735,4 +882,47 @@ const styles = StyleSheet.create({
   emojiCategoryTabs: { flexGrow: 0, paddingHorizontal: 8, paddingVertical: 4 },
   emojiCategoryTab: { paddingHorizontal: 12, paddingVertical: 8, marginRight: 4 },
   emojiItem: { flex: 1, aspectRatio: 1, justifyContent: 'center', alignItems: 'center' },
+
+  // ── Image Viewer ──
+  imageViewerContainer: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.95)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  imageViewerBg: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+  imageViewerClose: {
+    position: 'absolute', top: 50, right: 20, zIndex: 10,
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  imageViewerImage: {
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT * 0.75,
+  },
+  imageViewerDownload: {
+    position: 'absolute', bottom: 50,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20,
+  },
+  imageViewerDownloadText: { color: '#fff', fontSize: 15, fontWeight: '500' },
+
+  // ── Message Options ──
+  optionsOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  optionsContainer: {
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingTop: 12, paddingBottom: 34, paddingHorizontal: 16,
+  },
+  optionsTitle: {
+    fontSize: 13, textAlign: 'center', marginBottom: 16,
+  },
+  optionItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 14,
+  },
+  optionIcon: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
+  optionText: { fontSize: 16, fontWeight: '500' },
 });
