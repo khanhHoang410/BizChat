@@ -29,7 +29,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import socketService from '../lib/socket';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
 type Message = {
   _id: string;
   sender: { _id: string; name: string; avatar?: string };
@@ -47,8 +46,14 @@ type UserInfo = {
   status: 'online' | 'offline' | 'away';
 };
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+type GroupInfo = {
+  _id: string;
+  name: string;
+  avatar?: string;
+  membersCount: number;
+};
 
+// ─── Constants ────────────────────────────────────────────────────────────────
 const BASE_URL = 'http://103.82.25.230:3001';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -60,7 +65,6 @@ const EMOJI_CATEGORIES = [
 ];
 
 // ─── Component ────────────────────────────────────────────────────────────────
-
 const ChatDetailScreen = () => {
   const { id, type } = useLocalSearchParams<{ id: string; type: string }>();
   const router = useRouter();
@@ -81,45 +85,18 @@ const ChatDetailScreen = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
+  const [groupInfo, setGroupInfo] = useState<GroupInfo | null>(null);
   const [otherUserTyping, setOtherUserTyping] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [emojiCategoryIndex, setEmojiCategoryIndex] = useState(0);
-
-  // ← MỚI: Image viewer
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
-
-  // ← MỚI: Message options (xóa)
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const [showMessageOptions, setShowMessageOptions] = useState(false);
 
   const getToken = () => AsyncStorage.getItem('userToken');
 
-  // ─── Fetch ────────────────────────────────────────────────────────────────
-
-  const fetchUserInfo = async () => {
-    try {
-      const token = await getToken();
-      const response = await fetch(`${BASE_URL}/api/users/${id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await response.json();
-      setUserInfo(data.user);
-    } catch (error) { console.error('Fetch user info error:', error); }
-  };
-
-  const fetchMessages = async () => {
-    try {
-      const token = await getToken();
-      const response = await fetch(`${BASE_URL}/api/chat/messages/${id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await response.json();
-      setMessages(data.messages || []);
-    } catch (error) { console.error('Fetch messages error:', error); }
-    finally { setLoading(false); }
-  };
-
+  // ─── Fetch functions ────────────────────────────────────────────────────────
   const fetchCurrentUser = async () => {
     try {
       const token = await getToken();
@@ -134,10 +111,50 @@ const ChatDetailScreen = () => {
     } catch (error) { console.error('Fetch current user error:', error); }
   };
 
-  // ─── Mark as read ─────────────────────────────────────────────────────────
+  const fetchUserInfo = async () => {
+    try {
+      const token = await getToken();
+      const response = await fetch(`${BASE_URL}/api/users/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      setUserInfo(data.user);
+    } catch (error) { console.error('Fetch user info error:', error); }
+  };
 
+  const fetchGroupInfo = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/api/groups/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setGroupInfo({
+          _id: data.group._id,
+          name: data.group.name,
+          avatar: data.group.avatar,
+          membersCount: data.group.members.length,
+        });
+      }
+    } catch (error) { console.error('Fetch group info error:', error); }
+  };
+
+  const fetchMessages = async () => {
+    try {
+      const token = await getToken();
+      const response = await fetch(`${BASE_URL}/api/chat/messages/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      setMessages(data.messages || []);
+    } catch (error) { console.error('Fetch messages error:', error); }
+    finally { setLoading(false); }
+  };
+
+  // ─── Mark as read (chỉ áp dụng cho private) ───────────────────────────────
   const markMessagesAsRead = useCallback(async (msgs: Message[], user: UserInfo) => {
-    if (hasMarkedReadRef.current) return;
+    if (hasMarkedReadRef.current || type === 'group') return;
     const unreadIds = msgs
       .filter(msg => msg.sender._id !== user._id && !msg.readBy.includes(user._id))
       .map(msg => msg._id);
@@ -161,77 +178,104 @@ const ChatDetailScreen = () => {
     } catch (error) {
       hasMarkedReadRef.current = false;
     }
-  }, [id]);
+  }, [id, type]);
 
   useEffect(() => {
     onViewableItemsChanged.current = ({ viewableItems }: { viewableItems: Array<{ item: Message }> }) => {
-      if (!currentUser) return;
+      if (!currentUser || type === 'group') return;
       const visibleIds = viewableItems.map(v => v.item._id);
       const hasUnread = messages.some(
         msg => visibleIds.includes(msg._id) && msg.sender._id !== currentUser._id && !msg.readBy.includes(currentUser._id)
       );
       if (hasUnread) markMessagesAsRead(messages, currentUser);
     };
-  }, [messages, currentUser, markMessagesAsRead]);
+  }, [messages, currentUser, markMessagesAsRead, type]);
 
-  // ─── Socket ───────────────────────────────────────────────────────────────
-
+  // ─── Socket ─────────────────────────────────────────────────────────────────
   useEffect(() => {
     fetchCurrentUser();
-    fetchUserInfo();
+    if (type === 'group') {
+      fetchGroupInfo();
+    } else {
+      fetchUserInfo();
+    }
     fetchMessages();
 
     const socket = socketService.getSocket();
     if (!socket) return;
 
-    socket.on('receive_message', (data: any) => {
-      if (data.type === 'private' && data.message.sender._id === id) {
+    const handleReceiveMessage = (data: any) => {
+      if (type === 'private' && data.type === 'private' && data.message.sender._id === id) {
         setMessages(prev => [...prev, data.message]);
         flatListRef.current?.scrollToEnd({ animated: true });
         hasMarkedReadRef.current = false;
+      } else if (type === 'group' && data.type === 'group' && data.message.group === id) {
+        setMessages(prev => [...prev, data.message]);
+        flatListRef.current?.scrollToEnd({ animated: true });
       }
-    });
-    socket.on('user_typing', (data: any) => {
-      if (data.userId === id) setOtherUserTyping(data.isTyping);
-    });
-    socket.on('messages_read', (data: { messageIds: string[]; readerId: string }) => {
-      if (data.readerId === id) {
+    };
+
+    const handleUserTyping = (data: any) => {
+      if (type === 'private' && data.userId === id) {
+        setOtherUserTyping(data.isTyping);
+      }
+    };
+
+    const handleMessagesRead = (data: { messageIds: string[]; readerId: string }) => {
+      if (type === 'private' && data.readerId === id) {
         setMessages(prev => prev.map(msg => ({
           ...msg,
           readBy: data.messageIds.includes(msg._id) ? [...new Set([...msg.readBy, data.readerId])] : msg.readBy,
         })));
       }
-    });
-    socket.on('message_error', () => {
-      setMessages(prev => prev.filter(msg => !msg._id.startsWith('temp_')));
-    });
-    socket.on('message_sent', (data: { messageId: string }) => {
+    };
+
+    const handleMessageSent = (data: { messageId: string }) => {
       setMessages(prev => prev.map(msg => msg._id.startsWith('temp_') ? { ...msg, _id: data.messageId } : msg));
-    });
+    };
+
+    const handleMessageError = () => {
+      setMessages(prev => prev.filter(msg => !msg._id.startsWith('temp_')));
+    };
+
+    socket.on('receive_message', handleReceiveMessage);
+    socket.on('user_typing', handleUserTyping);
+    socket.on('messages_read', handleMessagesRead);
+    socket.on('message_sent', handleMessageSent);
+    socket.on('message_error', handleMessageError);
+
+    // Join group nếu là group chat
+    if (type === 'group' && socket.connected) {
+      socket.emit('join_group', id);
+    }
 
     return () => {
-      ['receive_message', 'user_typing', 'messages_read', 'message_error', 'message_sent']
-        .forEach(e => socket.off(e));
+      socket.off('receive_message', handleReceiveMessage);
+      socket.off('user_typing', handleUserTyping);
+      socket.off('messages_read', handleMessagesRead);
+      socket.off('message_sent', handleMessageSent);
+      socket.off('message_error', handleMessageError);
     };
-  }, [id]);
+  }, [id, type]);
 
-  // ─── Typing ───────────────────────────────────────────────────────────────
-
+  // ─── Typing handler ─────────────────────────────────────────────────────────
   const handleTyping = (text: string) => {
     setInputText(text);
     const socket = socketService.getSocket();
     if (!socket?.connected) return;
-    socket.emit('typing', { receiverId: id, isTyping: text.length > 0 });
+    const eventData = type === 'group'
+      ? { groupId: id, isTyping: text.length > 0 }
+      : { receiverId: id, isTyping: text.length > 0 };
+    socket.emit('typing', eventData);
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
     if (text.length > 0) {
       typingTimerRef.current = setTimeout(() => {
-        socket.emit('typing', { receiverId: id, isTyping: false });
+        socket.emit('typing', { ...eventData, isTyping: false });
       }, 2000);
     }
   };
 
-  // ─── Send text ────────────────────────────────────────────────────────────
-
+  // ─── Send text message ──────────────────────────────────────────────────────
   const sendMessage = async () => {
     if (!inputText.trim() || sending) return;
     const messageContent = inputText.trim();
@@ -241,26 +285,42 @@ const ChatDetailScreen = () => {
 
     const socket = socketService.getSocket();
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-    if (socket?.connected) socket.emit('typing', { receiverId: id, isTyping: false });
+    if (socket?.connected) {
+      if (type === 'group') {
+        socket.emit('typing', { groupId: id, isTyping: false });
+      } else {
+        socket.emit('typing', { receiverId: id, isTyping: false });
+      }
+    }
 
     const tempId = `temp_${Date.now()}`;
-    setMessages(prev => [...prev, {
+    const newMsg: Message = {
       _id: tempId,
       sender: { _id: currentUser?._id || '', name: currentUser?.name || '', avatar: currentUser?.avatar },
-      content: messageContent, type: 'text',
-      createdAt: new Date().toISOString(), readBy: [],
-    }]);
+      content: messageContent,
+      type: 'text',
+      createdAt: new Date().toISOString(),
+      readBy: [],
+    };
+    setMessages(prev => [...prev, newMsg]);
     flatListRef.current?.scrollToEnd({ animated: true });
 
     if (socket?.connected) {
-      socket.emit('send_private_message', { receiverId: id, content: messageContent, type: 'text' });
+      if (type === 'group') {
+        socket.emit('send_group_message', { groupId: id, content: messageContent, type: 'text' });
+      } else {
+        socket.emit('send_private_message', { receiverId: id, content: messageContent, type: 'text' });
+      }
     } else {
       try {
         const token = await getToken();
+        const body = type === 'group'
+          ? { groupId: id, content: messageContent, type: 'text' }
+          : { receiverId: id, content: messageContent, type: 'text' };
         const response = await fetch(`${BASE_URL}/api/chat/send`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ receiverId: id, content: messageContent, type: 'text' }),
+          body: JSON.stringify(body),
         });
         const data = await response.json();
         if (data.message) {
@@ -275,8 +335,7 @@ const ChatDetailScreen = () => {
     setSending(false);
   };
 
-  // ─── Send image → Cloudinary ──────────────────────────────────────────────
-
+  // ─── Send image ─────────────────────────────────────────────────────────────
   const pickAndSendImage = async () => {
     setShowAttachMenu(false);
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -296,20 +355,27 @@ const ChatDetailScreen = () => {
     setUploadingImage(true);
 
     const tempId = `temp_${Date.now()}`;
-    setMessages(prev => [...prev, {
+    const newMsg: Message = {
       _id: tempId,
       sender: { _id: currentUser?._id || '', name: currentUser?.name || '', avatar: currentUser?.avatar },
-      content: '📷 Ảnh', type: 'image',
-      createdAt: new Date().toISOString(), readBy: [],
+      content: '📷 Ảnh',
+      type: 'image',
+      createdAt: new Date().toISOString(),
+      readBy: [],
       attachments: [{ url: asset.uri, type: 'image', name: 'photo.jpg' }],
-    }]);
+    };
+    setMessages(prev => [...prev, newMsg]);
     setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
 
     try {
       const token = await getToken();
       const formData = new FormData();
       formData.append('file', { uri: asset.uri, type: asset.mimeType || 'image/jpeg', name: `photo_${Date.now()}.jpg` } as any);
-      formData.append('receiverId', id as string);
+      if (type === 'group') {
+        formData.append('groupId', id as string);
+      } else {
+        formData.append('receiverId', id as string);
+      }
 
       const uploadRes = await fetch(`${BASE_URL}/api/chat/upload/image`, {
         method: 'POST',
@@ -325,10 +391,16 @@ const ChatDetailScreen = () => {
 
       const socket = socketService.getSocket();
       if (socket?.connected) {
-        socket.emit('send_private_message', {
-          receiverId: id, content: '📷 Ảnh', type: 'image',
+        const messageData = {
+          content: '📷 Ảnh',
+          type: 'image',
           attachments: [{ url: imageUrl, type: 'image', name: 'photo.jpg' }],
-        });
+        };
+        if (type === 'group') {
+          socket.emit('send_group_message', { groupId: id, ...messageData });
+        } else {
+          socket.emit('send_private_message', { receiverId: id, ...messageData });
+        }
       }
     } catch (e) {
       console.error('Upload image error:', e);
@@ -337,8 +409,7 @@ const ChatDetailScreen = () => {
     }
   };
 
-  // ─── Send file → Supabase ─────────────────────────────────────────────────
-
+  // ─── Send file ──────────────────────────────────────────────────────────────
   const pickAndSendFile = async () => {
     setShowAttachMenu(false);
 
@@ -360,13 +431,16 @@ const ChatDetailScreen = () => {
     setUploadingFile(true);
 
     const tempId = `temp_${Date.now()}`;
-    setMessages(prev => [...prev, {
+    const newMsg: Message = {
       _id: tempId,
       sender: { _id: currentUser?._id || '', name: currentUser?.name || '', avatar: currentUser?.avatar },
-      content: asset.name || 'File', type: 'file',
-      createdAt: new Date().toISOString(), readBy: [],
+      content: asset.name || 'File',
+      type: 'file',
+      createdAt: new Date().toISOString(),
+      readBy: [],
       attachments: [{ url: '', type: 'document', name: asset.name || 'file' }],
-    }]);
+    };
+    setMessages(prev => [...prev, newMsg]);
     setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
 
     try {
@@ -377,7 +451,11 @@ const ChatDetailScreen = () => {
         type: asset.mimeType || 'application/octet-stream',
         name: asset.name || `file_${Date.now()}`,
       } as any);
-      formData.append('receiverId', id as string);
+      if (type === 'group') {
+        formData.append('groupId', id as string);
+      } else {
+        formData.append('receiverId', id as string);
+      }
 
       const uploadRes = await fetch(`${BASE_URL}/api/chat/upload/document`, {
         method: 'POST',
@@ -388,17 +466,21 @@ const ChatDetailScreen = () => {
       const fileUrl = uploadData.file?.url || '';
 
       setMessages(prev => prev.map(m =>
-        m._id === tempId
-          ? { ...m, attachments: [{ url: fileUrl, type: 'document', name: asset.name || 'file' }] }
-          : m
+        m._id === tempId ? { ...m, attachments: [{ url: fileUrl, type: 'document', name: asset.name || 'file' }] } : m
       ));
 
       const socket = socketService.getSocket();
       if (socket?.connected) {
-        socket.emit('send_private_message', {
-          receiverId: id, content: asset.name || 'File', type: 'file',
+        const messageData = {
+          content: asset.name || 'File',
+          type: 'file',
           attachments: [{ url: fileUrl, type: 'document', name: asset.name || 'file' }],
-        });
+        };
+        if (type === 'group') {
+          socket.emit('send_group_message', { groupId: id, ...messageData });
+        } else {
+          socket.emit('send_private_message', { receiverId: id, ...messageData });
+        }
       }
     } catch (e) {
       console.error('Upload file error:', e);
@@ -409,12 +491,10 @@ const ChatDetailScreen = () => {
     }
   };
 
-  // ─── MỚI: Xóa tin nhắn ───────────────────────────────────────────────────
-
+  // ─── Delete message ─────────────────────────────────────────────────────────
   const handleLongPressMessage = (message: Message) => {
-    // Chỉ cho xóa tin nhắn của mình
     if (message.sender._id !== currentUser?._id) return;
-    if (message._id.startsWith('temp_')) return; // không xóa temp message
+    if (message._id.startsWith('temp_')) return;
     setSelectedMessage(message);
     setShowMessageOptions(true);
   };
@@ -422,16 +502,13 @@ const ChatDetailScreen = () => {
   const deleteMessage = async () => {
     if (!selectedMessage) return;
     setShowMessageOptions(false);
-
     try {
       const token = await getToken();
       const res = await fetch(`${BASE_URL}/api/chat/${selectedMessage._id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
-
       if (res.ok) {
-        // Xóa khỏi local state
         setMessages(prev => prev.filter(m => m._id !== selectedMessage._id));
       } else {
         Alert.alert('Lỗi', 'Không thể xóa tin nhắn!');
@@ -444,8 +521,7 @@ const ChatDetailScreen = () => {
     }
   };
 
-  // ─── Emoji ────────────────────────────────────────────────────────────────
-
+  // ─── Render helpers ─────────────────────────────────────────────────────────
   const insertEmoji = (emoji: string) => setInputText(prev => prev + emoji);
 
   const renderEmojiPicker = () => (
@@ -472,8 +548,6 @@ const ChatDetailScreen = () => {
     </View>
   );
 
-  // ─── Attach menu ──────────────────────────────────────────────────────────
-
   const renderAttachMenu = () => (
     <View style={[styles.attachMenu, { backgroundColor: colors.background, borderTopColor: colors.borderColor }]}>
       <TouchableOpacity style={styles.attachMenuItem} onPress={pickAndSendImage} disabled={uploadingImage}>
@@ -498,12 +572,8 @@ const ChatDetailScreen = () => {
     </View>
   );
 
-  // ─── Format time ──────────────────────────────────────────────────────────
-
   const formatTime = (dateString: string) =>
     new Date(dateString).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-
-  // ─── Render message ───────────────────────────────────────────────────────
 
   const renderMessage = ({ item, index }: { item: Message; index: number }) => {
     const isMyMessage = item.sender._id === currentUser?._id;
@@ -544,7 +614,6 @@ const ChatDetailScreen = () => {
             { backgroundColor: isMyMessage ? colors.tint : colors.backgroundElement },
           ]}>
             {imageAttachment ? (
-              // ── Ảnh — nhấn để xem full screen ──
               <TouchableOpacity
                 onPress={() => imageAttachment.url && setSelectedImage(imageAttachment.url)}
                 activeOpacity={0.9}
@@ -557,7 +626,6 @@ const ChatDetailScreen = () => {
                 )}
               </TouchableOpacity>
             ) : fileAttachment ? (
-              // ── File — nhấn để mở ──
               <TouchableOpacity
                 style={styles.fileBubble}
                 onPress={() => fileAttachment.url && Linking.openURL(fileAttachment.url)}
@@ -582,7 +650,6 @@ const ChatDetailScreen = () => {
                 }
               </TouchableOpacity>
             ) : (
-              // ── Text ──
               <Text style={[styles.messageText, { color: isMyMessage ? '#fff' : colors.text }]}>
                 {item.content}
               </Text>
@@ -592,23 +659,20 @@ const ChatDetailScreen = () => {
               <Text style={[styles.messageTime, { color: isMyMessage ? 'rgba(255,255,255,0.6)' : colors.textSecondary }]}>
                 {formatTime(item.createdAt)}
               </Text>
-              {isMyMessage && (
-                isTemp
-                  ? <ActivityIndicator size={12} color="rgba(255,255,255,0.6)" />
-                  : <Ionicons
-                      name={isReadByOther ? 'checkmark-done' : 'checkmark'}
-                      size={16}
-                      color={isReadByOther ? '#4FC3F7' : 'rgba(255,255,255,0.6)'}
-                    />
+              {isMyMessage && !isTemp && type !== 'group' && (
+                <Ionicons
+                  name={isReadByOther ? 'checkmark-done' : 'checkmark'}
+                  size={16}
+                  color={isReadByOther ? '#4FC3F7' : 'rgba(255,255,255,0.6)'}
+                />
               )}
+              {isTemp && <ActivityIndicator size={12} color="rgba(255,255,255,0.6)" />}
             </View>
           </View>
         </View>
       </TouchableOpacity>
     );
   };
-
-  // ─── MỚI: Image Viewer Modal ──────────────────────────────────────────────
 
   const renderImageViewer = () => (
     <Modal
@@ -621,13 +685,9 @@ const ChatDetailScreen = () => {
         <TouchableWithoutFeedback onPress={() => setSelectedImage(null)}>
           <View style={styles.imageViewerBg} />
         </TouchableWithoutFeedback>
-
-        {/* Close button */}
         <TouchableOpacity style={styles.imageViewerClose} onPress={() => setSelectedImage(null)}>
           <Ionicons name="close" size={28} color="#fff" />
         </TouchableOpacity>
-
-        {/* Image */}
         {selectedImage && (
           <Image
             source={{ uri: selectedImage }}
@@ -635,8 +695,6 @@ const ChatDetailScreen = () => {
             resizeMode="contain"
           />
         )}
-
-        {/* Download button */}
         {selectedImage && (
           <TouchableOpacity
             style={styles.imageViewerDownload}
@@ -650,8 +708,6 @@ const ChatDetailScreen = () => {
     </Modal>
   );
 
-  // ─── MỚI: Message Options Modal (xóa tin nhắn) ───────────────────────────
-
   const renderMessageOptions = () => (
     <Modal
       visible={showMessageOptions}
@@ -663,22 +719,15 @@ const ChatDetailScreen = () => {
         <View style={styles.optionsOverlay}>
           <TouchableWithoutFeedback>
             <View style={[styles.optionsContainer, { backgroundColor: colors.background }]}>
-              <Text style={[styles.optionsTitle, { color: colors.textSecondary }]}>
-                Tùy chọn tin nhắn
-              </Text>
-
+              <Text style={[styles.optionsTitle, { color: colors.textSecondary }]}>Tùy chọn tin nhắn</Text>
               <TouchableOpacity
                 style={styles.optionItem}
                 onPress={() => {
                   setShowMessageOptions(false);
-                  Alert.alert(
-                    'Xóa tin nhắn',
-                    'Bạn có chắc muốn xóa tin nhắn này?',
-                    [
-                      { text: 'Hủy', style: 'cancel' },
-                      { text: 'Xóa', style: 'destructive', onPress: deleteMessage },
-                    ]
-                  );
+                  Alert.alert('Xóa tin nhắn', 'Bạn có chắc muốn xóa tin nhắn này?', [
+                    { text: 'Hủy', style: 'cancel' },
+                    { text: 'Xóa', style: 'destructive', onPress: deleteMessage },
+                  ]);
                 }}
               >
                 <View style={[styles.optionIcon, { backgroundColor: '#F44336' + '20' }]}>
@@ -686,7 +735,6 @@ const ChatDetailScreen = () => {
                 </View>
                 <Text style={[styles.optionText, { color: '#F44336' }]}>Xóa tin nhắn</Text>
               </TouchableOpacity>
-
               <TouchableOpacity
                 style={styles.optionItem}
                 onPress={() => setShowMessageOptions(false)}
@@ -703,8 +751,6 @@ const ChatDetailScreen = () => {
     </Modal>
   );
 
-  // ─── Loading ──────────────────────────────────────────────────────────────
-
   if (loading) {
     return (
       <View style={[styles.container, styles.centerContent, { backgroundColor: colors.background }]}>
@@ -713,21 +759,19 @@ const ChatDetailScreen = () => {
     );
   }
 
-  // ─── Main render ──────────────────────────────────────────────────────────
+  const headerTitle = type === 'group' ? groupInfo?.name : userInfo?.name;
+  const headerSubtitle = type === 'group'
+    ? `${groupInfo?.membersCount} thành viên`
+    : (otherUserTyping ? 'Đang gõ...' : (userInfo?.status === 'online' ? 'Đang hoạt động' : 'Ngoại tuyến'));
 
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
         <StatusBar barStyle={scheme === 'dark' ? 'light-content' : 'dark-content'} />
-
-        {/* Image Viewer Modal */}
         {renderImageViewer()}
-
-        {/* Message Options Modal */}
         {renderMessageOptions()}
 
-        {/* Header */}
         <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.borderColor }]}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color={colors.text} />
@@ -735,25 +779,42 @@ const ChatDetailScreen = () => {
 
           <TouchableOpacity
             style={styles.userInfo}
-            onPress={() => router.push(`/chat/info/${id}` as any)}
+            onPress={() => {
+              if (type === 'group') {
+                router.push(`/group/${id}` as any);
+              } else {
+                router.push(`/chat/info/${id}` as any);
+              }
+            }}
             activeOpacity={0.7}
           >
             <View style={styles.userAvatar}>
-              {userInfo?.avatar
-                ? <Image source={{ uri: userInfo.avatar }} style={styles.headerAvatar} />
-                : (
+              {type === 'group' ? (
+                groupInfo?.avatar ? (
+                  <Image source={{ uri: groupInfo.avatar }} style={styles.headerAvatar} />
+                ) : (
+                  <View style={[styles.headerAvatar, { backgroundColor: colors.tint + '20' }]}>
+                    <Ionicons name="people" size={24} color={colors.tint} />
+                  </View>
+                )
+              ) : (
+                userInfo?.avatar ? (
+                  <Image source={{ uri: userInfo.avatar }} style={styles.headerAvatar} />
+                ) : (
                   <View style={[styles.headerAvatar, { backgroundColor: colors.tint + '20' }]}>
                     <Text style={[styles.headerAvatarText, { color: colors.tint }]}>
                       {userInfo?.name?.charAt(0).toUpperCase()}
                     </Text>
                   </View>
                 )
-              }
+              )}
             </View>
             <View>
-              <Text style={[styles.userName, { color: colors.text }]}>{userInfo?.name}</Text>
-              <Text style={[styles.userStatus, { color: otherUserTyping ? colors.tint : colors.textSecondary }]}>
-                {otherUserTyping ? 'Đang gõ...' : userInfo?.status === 'online' ? 'Đang hoạt động' : 'Ngoại tuyến'}
+              <Text style={[styles.userName, { color: colors.text }]} numberOfLines={1}>
+                {headerTitle || (type === 'group' ? 'Nhóm' : 'Người dùng')}
+              </Text>
+              <Text style={[styles.userStatus, { color: otherUserTyping && type !== 'group' ? colors.tint : colors.textSecondary }]}>
+                {headerSubtitle}
               </Text>
             </View>
           </TouchableOpacity>
@@ -765,7 +826,6 @@ const ChatDetailScreen = () => {
           </View>
         </View>
 
-        {/* Messages */}
         <FlatList
           ref={flatListRef}
           data={messages}
@@ -779,7 +839,6 @@ const ChatDetailScreen = () => {
           onScrollBeginDrag={() => { setShowEmojiPicker(false); setShowAttachMenu(false); }}
         />
 
-        {/* Input */}
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
@@ -831,14 +890,13 @@ const ChatDetailScreen = () => {
 export default ChatDetailScreen;
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
   container: { flex: 1 },
   centerContent: { justifyContent: 'center', alignItems: 'center' },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1 },
   backButton: { padding: 8 },
-  userInfo: { flex: 1, flexDirection: 'row', alignItems: 'center', marginLeft: 8 },
-  userAvatar: { marginRight: 12 },
+  userInfo: { flex: 1, flexDirection: 'row', alignItems: 'center', marginLeft: 8, gap: 12 },
+  userAvatar: { marginRight: 0 },
   headerAvatar: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
   headerAvatarText: { fontSize: 18, fontWeight: 'bold' },
   userName: { fontSize: 16, fontWeight: '600' },
@@ -882,12 +940,7 @@ const styles = StyleSheet.create({
   emojiCategoryTabs: { flexGrow: 0, paddingHorizontal: 8, paddingVertical: 4 },
   emojiCategoryTab: { paddingHorizontal: 12, paddingVertical: 8, marginRight: 4 },
   emojiItem: { flex: 1, aspectRatio: 1, justifyContent: 'center', alignItems: 'center' },
-
-  // ── Image Viewer ──
-  imageViewerContainer: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.95)',
-    justifyContent: 'center', alignItems: 'center',
-  },
+  imageViewerContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
   imageViewerBg: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
   imageViewerClose: {
     position: 'absolute', top: 50, right: 20, zIndex: 10,
@@ -895,10 +948,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'center', alignItems: 'center',
   },
-  imageViewerImage: {
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT * 0.75,
-  },
+  imageViewerImage: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT * 0.75 },
   imageViewerDownload: {
     position: 'absolute', bottom: 50,
     flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -906,23 +956,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20,
   },
   imageViewerDownloadText: { color: '#fff', fontSize: 15, fontWeight: '500' },
-
-  // ── Message Options ──
-  optionsOverlay: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
+  optionsOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   optionsContainer: {
     borderTopLeftRadius: 20, borderTopRightRadius: 20,
     paddingTop: 12, paddingBottom: 34, paddingHorizontal: 16,
   },
-  optionsTitle: {
-    fontSize: 13, textAlign: 'center', marginBottom: 16,
-  },
-  optionItem: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingVertical: 14,
-  },
+  optionsTitle: { fontSize: 13, textAlign: 'center', marginBottom: 16 },
+  optionItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14 },
   optionIcon: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
   optionText: { fontSize: 16, fontWeight: '500' },
 });

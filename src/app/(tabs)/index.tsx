@@ -316,7 +316,7 @@ const HomeScreen = () => {
       
       <FlatList
         data={filteredConversations}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => `${item.type}_${item.id}`}
         renderItem={renderConversation}
         ListHeaderComponent={renderHeader}
         ListEmptyComponent={renderEmpty}
