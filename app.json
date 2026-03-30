@@ -18,6 +18,8 @@
             ]
           }
         ],
+         "NSCameraUsageDescription": "Ứng dụng cần camera để gọi video",
+         "NSMicrophoneUsageDescription": "Ứng dụng cần microphone để gọi video",
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         }
@@ -61,6 +63,12 @@
         "expo-image-picker",
         {
           "photosPermission": "Cho phép BizChat truy cập thư viện ảnh"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Ứng dụng cần camera để gọi video."
         }
       ]
     ],

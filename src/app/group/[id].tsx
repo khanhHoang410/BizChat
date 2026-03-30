@@ -414,6 +414,7 @@ const GroupDetailScreen = () => {
               style={styles.actionItem}
               onPress={() => router.push(`/chat/${id}?type=group` as any)}
             >
+            
               <View style={[styles.actionIcon, { backgroundColor: colors.tint }]}>
                 <Ionicons name="chatbubble" size={22} color="#fff" />
               </View>
@@ -444,6 +445,7 @@ const GroupDetailScreen = () => {
               </TouchableOpacity>
             )}
 
+              
             <TouchableOpacity style={styles.actionItem} onPress={handleLeave}>
               <View style={[styles.actionIcon, { backgroundColor: '#FB8C0015' }]}>
                 <Ionicons name="exit-outline" size={22} color="#FB8C00" />

@@ -95,6 +95,58 @@ const ChatDetailScreen = () => {
   const [showMessageOptions, setShowMessageOptions] = useState(false);
 
   const getToken = () => AsyncStorage.getItem('userToken');
+  
+  useEffect(() => {
+  const socket = socketService.getSocket();
+  if (!socket) return;
+
+  // Lắng nghe group call
+  socket.on('group_call_offer', ({ groupId, channelName, callerName, callerAvatar }) => {
+    if (groupId === id) {
+      Alert.alert(
+        'Cuộc gọi nhóm',
+        `${callerName} đang gọi video nhóm...`,
+        [
+          { text: 'Từ chối', style: 'cancel' },
+          { text: 'Tham gia', onPress: () => {
+            // Tham gia cuộc gọi nhóm
+            router.push({
+              pathname: '/call/[channelName]',
+              params: { channelName, targetId: groupId, isGroup: 'true' }
+            });
+          } }
+        ]
+      );
+    }
+  });
+
+  return () => {
+    socket.off('group_call_offer');
+  };
+}, [id]);
+  useEffect(() => {
+  const socket = socketService.getSocket();
+  if (!socket) return;
+
+  socket.on('incoming_call', ({ from, channelName, callerName, callerAvatar, type }) => {
+    Alert.alert(
+      'Cuộc gọi đến',
+      `${callerName} đang gọi video...`,
+      [
+        { text: 'Từ chối', style: 'cancel', onPress: () => socket.emit('call_reject', { to: from }) },
+        { text: 'Trả lời', onPress: () => {
+          socket.emit('call_accept', { to: from, channelName });
+          router.push({
+            pathname: '/call/[channelName]',
+            params: { channelName, targetId: from, isGroup: 'false' },
+          });
+        } },
+      ]
+    );
+  });
+
+  return () => { socket.off('incoming_call'); };
+}, []);
 
   // ─── Fetch functions ────────────────────────────────────────────────────────
   const fetchCurrentUser = async () => {
@@ -520,7 +572,48 @@ const ChatDetailScreen = () => {
       setSelectedMessage(null);
     }
   };
-
+  const startCall = async () => {
+  if (type === 'group') {
+    // Group call: tạo channel name riêng cho nhóm
+    const channelName = `group_${id}`;
+    const socket = socketService.getSocket();
+      if (!socket) {
+      Alert.alert('Lỗi', 'Không thể kết nối socket. Vui lòng thử lại.');
+      return;
+    }
+    // Phát tín hiệu mời gọi đến tất cả thành viên trong nhóm
+    socket.emit('group_call_offer', {
+      groupId: id,
+      channelName,
+      callerName: currentUser?.name,
+      callerAvatar: currentUser?.avatar,
+    });
+    // Điều hướng vào màn hình call
+    router.push({
+      pathname: '/call/[channelName]',
+      params: { channelName, targetId: id, isGroup: 'true' }
+    });
+  } else {
+    // Private call (như cũ)
+    const channelName = `private_${currentUser?._id}_${id}`;
+    const socket = socketService.getSocket();
+      if (!socket) {
+      Alert.alert('Lỗi', 'Không thể kết nối socket. Vui lòng thử lại.');
+      return;
+    }
+    socket.emit('call_offer', {
+      to: id,
+      channelName,
+      callerName: currentUser?.name,
+      callerAvatar: currentUser?.avatar,
+      type: 'video'
+    });
+    router.push({
+      pathname: '/call/[channelName]',
+      params: { channelName, targetId: id, isGroup: 'false' }
+    });
+  }
+};
   // ─── Render helpers ─────────────────────────────────────────────────────────
   const insertEmoji = (emoji: string) => setInputText(prev => prev + emoji);
 
@@ -820,7 +913,7 @@ const ChatDetailScreen = () => {
           </TouchableOpacity>
 
           <View style={styles.headerActions}>
-            <TouchableOpacity style={styles.headerButton}>
+            <TouchableOpacity style={styles.headerButton} onPress={startCall}>
               <Ionicons name="call-outline" size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
