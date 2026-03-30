@@ -18,10 +18,10 @@
             ]
           }
         ],
-         "NSCameraUsageDescription": "Ứng dụng cần camera để gọi video",
-         "NSMicrophoneUsageDescription": "Ứng dụng cần microphone để gọi video",
+        "NSCameraUsageDescription": "Ứng dụng cần camera để gọi video",
+        "NSMicrophoneUsageDescription": "Ứng dụng cần microphone để gọi video",
         "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true
+        "NSAllowsArbitraryLoads": true
         }
       },
       "appleTeamId": "X6F5T296SH"

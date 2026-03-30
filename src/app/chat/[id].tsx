@@ -37,6 +37,9 @@ type Message = {
   createdAt: string;
   readBy: string[];
   attachments?: { url: string; type: string; name: string }[];
+  isRevoked?: boolean;
+  pinned?: boolean;
+  pinnedAt?: string;
 };
 
 type UserInfo = {
@@ -95,58 +98,62 @@ const ChatDetailScreen = () => {
   const [showMessageOptions, setShowMessageOptions] = useState(false);
 
   const getToken = () => AsyncStorage.getItem('userToken');
-  
-  useEffect(() => {
-  const socket = socketService.getSocket();
-  if (!socket) return;
 
-  // Lắng nghe group call
-  socket.on('group_call_offer', ({ groupId, channelName, callerName, callerAvatar }) => {
-    if (groupId === id) {
+  // ─── Socket events for call (giữ nguyên) ────────────────────────────────────
+  useEffect(() => {
+    const socket = socketService.getSocket();
+    if (!socket) return;
+
+    socket.on('group_call_offer', ({ groupId, channelName, callerName }) => {
+      if (groupId === id) {
+        Alert.alert(
+          'Cuộc gọi nhóm',
+          `${callerName} đang gọi video nhóm...`,
+          [
+            { text: 'Từ chối', style: 'cancel' },
+            { text: 'Tham gia', onPress: () => {
+                router.push({
+                  pathname: '/call/[channelName]',
+                  params: { channelName, targetId: groupId, isGroup: 'true' }
+                });
+              }
+            }
+          ]
+        );
+      }
+    });
+
+    return () => {
+      socket.off('group_call_offer');
+    };
+  }, [id]);
+
+  useEffect(() => {
+    const socket = socketService.getSocket();
+    if (!socket) return;
+
+    socket.on('incoming_call', ({ from, channelName, callerName }) => {
       Alert.alert(
-        'Cuộc gọi nhóm',
-        `${callerName} đang gọi video nhóm...`,
+        'Cuộc gọi đến',
+        `${callerName} đang gọi video...`,
         [
-          { text: 'Từ chối', style: 'cancel' },
-          { text: 'Tham gia', onPress: () => {
-            // Tham gia cuộc gọi nhóm
-            router.push({
-              pathname: '/call/[channelName]',
-              params: { channelName, targetId: groupId, isGroup: 'true' }
-            });
-          } }
+          { text: 'Từ chối', style: 'cancel', onPress: () => socket.emit('call_reject', { to: from }) },
+          { text: 'Trả lời', onPress: () => {
+              socket.emit('call_accept', { to: from, channelName });
+              router.push({
+                pathname: '/call/[channelName]',
+                params: { channelName, targetId: from, isGroup: 'false' },
+              });
+            }
+          }
         ]
       );
-    }
-  });
+    });
 
-  return () => {
-    socket.off('group_call_offer');
-  };
-}, [id]);
-  useEffect(() => {
-  const socket = socketService.getSocket();
-  if (!socket) return;
-
-  socket.on('incoming_call', ({ from, channelName, callerName, callerAvatar, type }) => {
-    Alert.alert(
-      'Cuộc gọi đến',
-      `${callerName} đang gọi video...`,
-      [
-        { text: 'Từ chối', style: 'cancel', onPress: () => socket.emit('call_reject', { to: from }) },
-        { text: 'Trả lời', onPress: () => {
-          socket.emit('call_accept', { to: from, channelName });
-          router.push({
-            pathname: '/call/[channelName]',
-            params: { channelName, targetId: from, isGroup: 'false' },
-          });
-        } },
-      ]
-    );
-  });
-
-  return () => { socket.off('incoming_call'); };
-}, []);
+    return () => {
+      socket.off('incoming_call');
+    };
+  }, []);
 
   // ─── Fetch functions ────────────────────────────────────────────────────────
   const fetchCurrentUser = async () => {
@@ -204,7 +211,7 @@ const ChatDetailScreen = () => {
     finally { setLoading(false); }
   };
 
-  // ─── Mark as read (chỉ áp dụng cho private) ───────────────────────────────
+  // ─── Mark as read (private) ────────────────────────────────────────────────
   const markMessagesAsRead = useCallback(async (msgs: Message[], user: UserInfo) => {
     if (hasMarkedReadRef.current || type === 'group') return;
     const unreadIds = msgs
@@ -243,7 +250,7 @@ const ChatDetailScreen = () => {
     };
   }, [messages, currentUser, markMessagesAsRead, type]);
 
-  // ─── Socket ─────────────────────────────────────────────────────────────────
+  // ─── Socket (chính) ─────────────────────────────────────────────────────────
   useEffect(() => {
     fetchCurrentUser();
     if (type === 'group') {
@@ -290,13 +297,30 @@ const ChatDetailScreen = () => {
       setMessages(prev => prev.filter(msg => !msg._id.startsWith('temp_')));
     };
 
+    // ✨ NEW: revoke message
+    const handleMessageRevoked = ({ messageId }: { messageId: string }) => {
+      setMessages(prev => prev.map(msg =>
+        msg._id === messageId
+          ? { ...msg, content: 'Tin nhắn đã được thu hồi', isRevoked: true, attachments: [] }
+          : msg
+      ));
+    };
+
+    // ✨ NEW: pin message
+    const handleMessagePinned = ({ messageId, pinned }: { messageId: string; pinned: boolean }) => {
+      setMessages(prev => prev.map(msg =>
+        msg._id === messageId ? { ...msg, pinned } : msg
+      ));
+    };
+
     socket.on('receive_message', handleReceiveMessage);
     socket.on('user_typing', handleUserTyping);
     socket.on('messages_read', handleMessagesRead);
     socket.on('message_sent', handleMessageSent);
     socket.on('message_error', handleMessageError);
+    socket.on('message_revoked', handleMessageRevoked);
+    socket.on('message_pinned', handleMessagePinned);
 
-    // Join group nếu là group chat
     if (type === 'group' && socket.connected) {
       socket.emit('join_group', id);
     }
@@ -307,6 +331,8 @@ const ChatDetailScreen = () => {
       socket.off('messages_read', handleMessagesRead);
       socket.off('message_sent', handleMessageSent);
       socket.off('message_error', handleMessageError);
+      socket.off('message_revoked', handleMessageRevoked);
+      socket.off('message_pinned', handleMessagePinned);
     };
   }, [id, type]);
 
@@ -461,7 +487,7 @@ const ChatDetailScreen = () => {
     }
   };
 
-  // ─── Send file ──────────────────────────────────────────────────────────────
+  // ─── Send file (including video) ──────────────────────────────────────────────
   const pickAndSendFile = async () => {
     setShowAttachMenu(false);
 
@@ -543,8 +569,9 @@ const ChatDetailScreen = () => {
     }
   };
 
-  // ─── Delete message ─────────────────────────────────────────────────────────
+  // ─── Message actions (delete, revoke, pin) ───────────────────────────────────
   const handleLongPressMessage = (message: Message) => {
+    // Chỉ cho phép thao tác với tin nhắn của mình và chưa bị thu hồi
     if (message.sender._id !== currentUser?._id) return;
     if (message._id.startsWith('temp_')) return;
     setSelectedMessage(message);
@@ -572,48 +599,120 @@ const ChatDetailScreen = () => {
       setSelectedMessage(null);
     }
   };
+
+  const revokeMessage = async () => {
+    if (!selectedMessage) return;
+    setShowMessageOptions(false);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/api/chat/${selectedMessage._id}/revoke`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        // Cập nhật local
+        setMessages(prev => prev.map(msg =>
+          msg._id === selectedMessage._id
+            ? { ...msg, content: 'Tin nhắn đã được thu hồi', isRevoked: true, attachments: [] }
+            : msg
+        ));
+        // Gửi socket
+        const socket = socketService.getSocket();
+        if (socket) {
+          socket.emit('revoke_message', {
+            messageId: selectedMessage._id,
+            receiverId: type === 'private' ? id : undefined,
+            groupId: type === 'group' ? id : undefined,
+          });
+        }
+      } else {
+        Alert.alert('Lỗi', 'Không thể thu hồi tin nhắn');
+      }
+    } catch (error) {
+      console.error('Revoke error:', error);
+    } finally {
+      setSelectedMessage(null);
+    }
+  };
+
+  const pinMessage = async () => {
+    if (!selectedMessage) return;
+    setShowMessageOptions(false);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/api/chat/${selectedMessage._id}/pin`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ pinned: !selectedMessage.pinned }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        // Cập nhật local
+        setMessages(prev => prev.map(msg =>
+          msg._id === selectedMessage._id
+            ? { ...msg, pinned: data.pinned, pinnedAt: data.pinnedAt }
+            : msg
+        ));
+        // Gửi socket
+        const socket = socketService.getSocket();
+        if (socket) {
+          socket.emit('message_pinned', {
+            messageId: selectedMessage._id,
+            pinned: data.pinned,
+            receiverId: type === 'private' ? id : undefined,
+            groupId: type === 'group' ? id : undefined,
+          });
+        }
+      } else {
+        Alert.alert('Lỗi', data.error || 'Không thể ghim tin nhắn');
+      }
+    } catch (error) {
+      console.error('Pin error:', error);
+    } finally {
+      setSelectedMessage(null);
+    }
+  };
+
+  // ─── Call ───────────────────────────────────────────────────────────────────
   const startCall = async () => {
-  if (type === 'group') {
-    // Group call: tạo channel name riêng cho nhóm
-    const channelName = `group_${id}`;
-    const socket = socketService.getSocket();
+    if (type === 'group') {
+      const channelName = `group_${id}`;
+      const socket = socketService.getSocket();
       if (!socket) {
-      Alert.alert('Lỗi', 'Không thể kết nối socket. Vui lòng thử lại.');
-      return;
-    }
-    // Phát tín hiệu mời gọi đến tất cả thành viên trong nhóm
-    socket.emit('group_call_offer', {
-      groupId: id,
-      channelName,
-      callerName: currentUser?.name,
-      callerAvatar: currentUser?.avatar,
-    });
-    // Điều hướng vào màn hình call
-    router.push({
-      pathname: '/call/[channelName]',
-      params: { channelName, targetId: id, isGroup: 'true' }
-    });
-  } else {
-    // Private call (như cũ)
-    const channelName = `private_${currentUser?._id}_${id}`;
-    const socket = socketService.getSocket();
+        Alert.alert('Lỗi', 'Không thể kết nối socket. Vui lòng thử lại.');
+        return;
+      }
+      socket.emit('group_call_offer', {
+        groupId: id,
+        channelName,
+        callerName: currentUser?.name,
+        callerAvatar: currentUser?.avatar,
+      });
+      router.push({
+        pathname: '/call/[channelName]',
+        params: { channelName, targetId: id, isGroup: 'true' }
+      });
+    } else {
+      const channelName = `private_${currentUser?._id}_${id}`;
+      const socket = socketService.getSocket();
       if (!socket) {
-      Alert.alert('Lỗi', 'Không thể kết nối socket. Vui lòng thử lại.');
-      return;
+        Alert.alert('Lỗi', 'Không thể kết nối socket. Vui lòng thử lại.');
+        return;
+      }
+      socket.emit('call_offer', {
+        to: id,
+        channelName,
+        callerName: currentUser?.name,
+        callerAvatar: currentUser?.avatar,
+        type: 'video'
+      });
+      router.push({
+        pathname: '/call/[channelName]',
+        params: { channelName, targetId: id, isGroup: 'false' }
+      });
     }
-    socket.emit('call_offer', {
-      to: id,
-      channelName,
-      callerName: currentUser?.name,
-      callerAvatar: currentUser?.avatar,
-      type: 'video'
-    });
-    router.push({
-      pathname: '/call/[channelName]',
-      params: { channelName, targetId: id, isGroup: 'false' }
-    });
-  }
-};
+  };
+
   // ─── Render helpers ─────────────────────────────────────────────────────────
   const insertEmoji = (emoji: string) => setInputText(prev => prev + emoji);
 
@@ -676,6 +775,45 @@ const ChatDetailScreen = () => {
     const isTemp = item._id.startsWith('temp_');
     const imageAttachment = item.type === 'image' ? item.attachments?.[0] : null;
     const fileAttachment = item.type === 'file' ? item.attachments?.[0] : null;
+
+    // Hiển thị tin nhắn đã thu hồi
+    if (item.isRevoked) {
+      return (
+        <View style={[styles.messageRow, isMyMessage ? styles.myMessageRow : styles.otherMessageRow]}>
+          {!isMyMessage && (
+            <View style={styles.avatarContainer}>
+              {showAvatar ? (
+                item.sender.avatar ? (
+                  <Image source={{ uri: item.sender.avatar }} style={styles.avatar} />
+                ) : (
+                  <View style={[styles.avatar, { backgroundColor: colors.tint + '20' }]}>
+                    <Text style={[styles.avatarText, { color: colors.tint }]}>
+                      {item.sender.name.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                )
+              ) : (
+                <View style={styles.avatarPlaceholder} />
+              )}
+            </View>
+          )}
+          <View style={[
+            styles.messageBubble,
+            isMyMessage ? styles.myMessage : styles.otherMessage,
+            { backgroundColor: isMyMessage ? colors.tint + '80' : colors.backgroundElement },
+          ]}>
+            <Text style={[styles.messageText, { color: isMyMessage ? '#fff' : colors.textSecondary, fontStyle: 'italic' }]}>
+              {item.content}
+            </Text>
+            <View style={styles.messageFooter}>
+              <Text style={[styles.messageTime, { color: isMyMessage ? 'rgba(255,255,255,0.6)' : colors.textSecondary }]}>
+                {formatTime(item.createdAt)}
+              </Text>
+            </View>
+          </View>
+        </View>
+      );
+    }
 
     return (
       <TouchableOpacity
@@ -760,6 +898,9 @@ const ChatDetailScreen = () => {
                 />
               )}
               {isTemp && <ActivityIndicator size={12} color="rgba(255,255,255,0.6)" />}
+              {item.pinned && (
+                <Ionicons name="pin" size={12} color={isMyMessage ? 'rgba(255,255,255,0.6)' : colors.textSecondary} />
+              )}
             </View>
           </View>
         </View>
@@ -813,6 +954,7 @@ const ChatDetailScreen = () => {
           <TouchableWithoutFeedback>
             <View style={[styles.optionsContainer, { backgroundColor: colors.background }]}>
               <Text style={[styles.optionsTitle, { color: colors.textSecondary }]}>Tùy chọn tin nhắn</Text>
+
               <TouchableOpacity
                 style={styles.optionItem}
                 onPress={() => {
@@ -828,6 +970,31 @@ const ChatDetailScreen = () => {
                 </View>
                 <Text style={[styles.optionText, { color: '#F44336' }]}>Xóa tin nhắn</Text>
               </TouchableOpacity>
+
+              {/* Thu hồi */}
+              <TouchableOpacity
+                style={styles.optionItem}
+                onPress={revokeMessage}
+              >
+                <View style={[styles.optionIcon, { backgroundColor: '#FF9800' + '20' }]}>
+                  <Ionicons name="arrow-undo-outline" size={20} color="#FF9800" />
+                </View>
+                <Text style={[styles.optionText, { color: '#FF9800' }]}>Thu hồi tin nhắn</Text>
+              </TouchableOpacity>
+
+              {/* Ghim */}
+              <TouchableOpacity
+                style={styles.optionItem}
+                onPress={pinMessage}
+              >
+                <View style={[styles.optionIcon, { backgroundColor: '#2196F3' + '20' }]}>
+                  <Ionicons name="pin" size={20} color="#2196F3" />
+                </View>
+                <Text style={[styles.optionText, { color: '#2196F3' }]}>
+                  {selectedMessage?.pinned ? 'Bỏ ghim' : 'Ghim tin nhắn'}
+                </Text>
+              </TouchableOpacity>
+
               <TouchableOpacity
                 style={styles.optionItem}
                 onPress={() => setShowMessageOptions(false)}
