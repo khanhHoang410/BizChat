@@ -23,10 +23,9 @@ import {
   TouchableOpacity,
   TouchableWithoutFeedback,
   View,
+  useColorScheme,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useColorScheme } from '@/hooks/use-color-scheme';
-import { API_BASE } from '@/constants/api';
 import socketService from '../lib/socket';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -41,7 +40,6 @@ type Message = {
   isRevoked?: boolean;
   pinned?: boolean;
   pinnedAt?: string;
-  reactions?: { user: string; emoji: string }[];
 };
 
 type UserInfo = {
@@ -59,7 +57,7 @@ type GroupInfo = {
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const BASE_URL = API_BASE;
+const BASE_URL = 'http://103.82.25.230:3001';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const EMOJI_CATEGORIES = [
@@ -98,7 +96,6 @@ const ChatDetailScreen = () => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const [showMessageOptions, setShowMessageOptions] = useState(false);
-  const [showReactionPicker, setShowReactionPicker] = useState(false);
   // Tin nhắn được ghim (hiện banner đầu màn hình)
   const [pinnedMessage, setPinnedMessage] = useState<Message | null>(null);
 
@@ -270,10 +267,6 @@ const ChatDetailScreen = () => {
       });
     };
 
-    const handleReactionUpdated = ({ messageId, reactions }: { messageId: string; reactions: { user: string; emoji: string }[] }) => {
-      setMessages(prev => prev.map(m => m._id === messageId ? { ...m, reactions } : m));
-    };
-
     socket.on('receive_message', handleReceiveMessage);
     socket.on('user_typing', handleUserTyping);
     socket.on('messages_read', handleMessagesRead);
@@ -281,7 +274,6 @@ const ChatDetailScreen = () => {
     socket.on('message_error', handleMessageError);
     socket.on('message_revoked', handleMessageRevoked);
     socket.on('message_pinned', handleMessagePinned);
-    socket.on('message_reaction_updated', handleReactionUpdated);
 
     if (type === 'group' && socket.connected) socket.emit('join_group', id);
 
@@ -293,7 +285,6 @@ const ChatDetailScreen = () => {
       socket.off('message_error', handleMessageError);
       socket.off('message_revoked', handleMessageRevoked);
       socket.off('message_pinned', handleMessagePinned);
-      socket.off('message_reaction_updated', handleReactionUpdated);
     };
   }, [id, type]);
 
@@ -444,34 +435,14 @@ const ChatDetailScreen = () => {
   };
 
   // ─── Message actions ─────────────────────────────────────────────────────────
-  // ✅ FIX: Cho phép long press cả tin nhắn của mình kể cả ảnh/file
+  // ✅ Cho phép long press cả tin nhắn của mình lẫn người khác
+  // — tin nhắn của mình: thu hồi, ghim, xóa
+  // — tin nhắn người khác: chỉ ghim
   const handleLongPressMessage = (message: Message) => {
     if (message._id.startsWith('temp_')) return;
-    if (message.isRevoked) return; // Đã thu hồi rồi thì không show options
+    if (message.isRevoked) return;
     setSelectedMessage(message);
-    setShowReactionPicker(true);
-  };
-
-  const reactToMessage = async (emoji: string) => {
-    if (!selectedMessage) return;
-    setShowReactionPicker(false);
-    try {
-      const socket = socketService.getSocket();
-      if (socket?.connected) {
-        socket.emit('react_message', { messageId: selectedMessage._id, emoji });
-        return;
-      }
-      const token = await getToken();
-      await fetch(`${BASE_URL}/api/chat/${selectedMessage._id}/reactions`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ emoji }),
-      });
-    } catch (e) {
-      console.error('React error:', e);
-    } finally {
-      setSelectedMessage(null);
-    }
+    setShowMessageOptions(true);
   };
 
   const deleteMessage = async () => {
@@ -676,12 +647,22 @@ const ChatDetailScreen = () => {
     ) : null;
 
     const bubbleContent = item.isRevoked ? (
-      // ✅ Thu hồi — luôn hiển thị text nghiêng, không render ảnh/file
       <Text style={[styles.messageText, { color: isMyMessage ? 'rgba(255,255,255,0.7)' : colors.textSecondary, fontStyle: 'italic' }]}>
         🚫 Tin nhắn đã được thu hồi
       </Text>
     ) : imageAttachment ? (
-      <Image source={{ uri: imageAttachment.url }} style={styles.messageImage} resizeMode="cover" />
+      // ✅ FIX: onPress mở ảnh, onLongPress mở options — tách biệt hoàn toàn
+      <TouchableOpacity
+        activeOpacity={0.9}
+        onPress={() => imageAttachment.url && setSelectedImage(imageAttachment.url)}
+        onLongPress={() => handleLongPressMessage(item)}
+        delayLongPress={400}
+      >
+        <Image source={{ uri: imageAttachment.url }} style={styles.messageImage} resizeMode="cover" />
+        {isTemp && uploadingImage && (
+          <View style={styles.mediaOverlay}><ActivityIndicator color="#fff" /></View>
+        )}
+      </TouchableOpacity>
     ) : fileAttachment ? (
       <TouchableOpacity
         style={styles.fileBubble}
@@ -705,89 +686,54 @@ const ChatDetailScreen = () => {
       <Text style={[styles.messageText, { color: isMyMessage ? '#fff' : colors.text }]}>{item.content}</Text>
     );
 
-    const reactionSummary = (item.reactions || []).reduce<Record<string, number>>((acc, r) => {
-      if (!r?.emoji) return acc;
-      acc[r.emoji] = (acc[r.emoji] || 0) + 1;
-      return acc;
-    }, {});
-    const reactionLine = Object.entries(reactionSummary)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
-      .map(([emoji, count]) => `${emoji}${count > 1 ? ` ${count}` : ''}`)
-      .join('  ');
+    // Ảnh không cần bubble background, text/file thì cần
+    const isImageMsg = !!imageAttachment && !item.isRevoked;
 
     return (
-      // ✅ FIX: Toàn bộ message (kể cả ảnh) đều có onLongPress
       <TouchableOpacity
-        activeOpacity={0.85}
-        onLongPress={() => handleLongPressMessage(item)}
+        activeOpacity={imageAttachment ? 1 : 0.85} // ảnh xử lý press bên trong
+        onLongPress={() => !imageAttachment && handleLongPressMessage(item)}
         delayLongPress={400}
       >
         <View style={[styles.messageRow, isMyMessage ? styles.myMessageRow : styles.otherMessageRow]}>
           {avatarEl}
           <View style={[
-            styles.messageBubble,
+            isImageMsg ? styles.imageBubble : styles.messageBubble,
             isMyMessage ? styles.myMessage : styles.otherMessage,
-            (imageAttachment && !item.isRevoked) ? styles.mediaBubble : null,
-            { backgroundColor: item.isRevoked
-                ? (isMyMessage ? colors.tint + '60' : colors.backgroundElement)
-                : (isMyMessage ? colors.tint : colors.backgroundElement) },
+            !isImageMsg && { backgroundColor: item.isRevoked
+              ? (isMyMessage ? colors.tint + '60' : colors.backgroundElement)
+              : (isMyMessage ? colors.tint : colors.backgroundElement) },
           ]}>
-            {isTemp && uploadingImage && imageAttachment ? (
-              <View style={{ position: 'relative' }}>
-                {bubbleContent}
-                <View style={styles.mediaOverlay}><ActivityIndicator color="#fff" /></View>
-              </View>
-            ) : bubbleContent}
+            {bubbleContent}
 
-            {!!reactionLine && (
-              <View style={{ marginTop: 6 }}>
-                <Text style={{ fontSize: 12, color: isMyMessage ? 'rgba(255,255,255,0.85)' : colors.textSecondary }}>
-                  {reactionLine}
+            {/* Footer giờ overlay lên ảnh giống Zalo */}
+            {isImageMsg ? (
+              <View style={styles.imageFooterOverlay}>
+                <Text style={styles.imageFooterTime}>{formatTime(item.createdAt)}</Text>
+                {isMyMessage && !isTemp && type !== 'group' && (
+                  <Ionicons name={isReadByOther ? 'checkmark-done' : 'checkmark'} size={14} color="rgba(255,255,255,0.9)" />
+                )}
+              </View>
+            ) : (
+              <View style={styles.messageFooter}>
+                <Text style={[styles.messageTime, { color: isMyMessage ? 'rgba(255,255,255,0.6)' : colors.textSecondary }]}>
+                  {formatTime(item.createdAt)}
                 </Text>
+                {isMyMessage && !isTemp && !item.isRevoked && type !== 'group' && (
+                  <Ionicons name={isReadByOther ? 'checkmark-done' : 'checkmark'} size={16}
+                    color={isReadByOther ? '#4FC3F7' : 'rgba(255,255,255,0.6)'} />
+                )}
+                {isTemp && <ActivityIndicator size={12} color="rgba(255,255,255,0.6)" />}
+                {item.pinned && !item.isRevoked && (
+                  <Ionicons name="pin" size={12} color={isMyMessage ? 'rgba(255,255,255,0.6)' : colors.textSecondary} />
+                )}
               </View>
             )}
-
-            <View style={styles.messageFooter}>
-              <Text style={[styles.messageTime, { color: isMyMessage ? 'rgba(255,255,255,0.6)' : colors.textSecondary }]}>
-                {formatTime(item.createdAt)}
-              </Text>
-              {isMyMessage && !isTemp && !item.isRevoked && type !== 'group' && (
-                <Ionicons name={isReadByOther ? 'checkmark-done' : 'checkmark'} size={16}
-                  color={isReadByOther ? '#4FC3F7' : 'rgba(255,255,255,0.6)'} />
-              )}
-              {isTemp && <ActivityIndicator size={12} color="rgba(255,255,255,0.6)" />}
-              {item.pinned && !item.isRevoked && (
-                <Ionicons name="pin" size={12} color={isMyMessage ? 'rgba(255,255,255,0.6)' : colors.textSecondary} />
-              )}
-            </View>
           </View>
         </View>
       </TouchableOpacity>
     );
   };
-
-  const QUICK_REACTIONS = ['❤️', '😂', '😮', '😢', '😡', '👍'];
-  const renderReactionPicker = () => (
-    <Modal visible={showReactionPicker} transparent animationType="fade" onRequestClose={() => setShowReactionPicker(false)}>
-      <TouchableWithoutFeedback onPress={() => { setShowReactionPicker(false); setSelectedMessage(null); }}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center' }}>
-          <TouchableWithoutFeedback>
-            <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 999, backgroundColor: colors.background }}>
-              {QUICK_REACTIONS.map((e) => (
-                <TouchableOpacity key={e} onPress={() => reactToMessage(e)} style={{ paddingHorizontal: 6, paddingVertical: 4 }}>
-                  <Text style={{ fontSize: 22 }}>{e}</Text>
-                </TouchableOpacity>
-              ))}
-              <TouchableOpacity onPress={() => { setShowReactionPicker(false); setShowMessageOptions(true); }} style={{ paddingHorizontal: 6, paddingVertical: 6 }}>
-                <Ionicons name="ellipsis-horizontal" size={20} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-          </TouchableWithoutFeedback>
-        </View>
-      </TouchableWithoutFeedback>
-    </Modal>
-  );
 
   const renderImageViewer = () => (
     <Modal visible={!!selectedImage} transparent animationType="fade" onRequestClose={() => setSelectedImage(null)}>
@@ -809,7 +755,9 @@ const ChatDetailScreen = () => {
     </Modal>
   );
 
-  const renderMessageOptions = () => (
+  const renderMessageOptions = () => {
+    const isMyMsg = selectedMessage?.sender._id === currentUser?._id;
+    return (
     <Modal visible={showMessageOptions} transparent animationType="slide" onRequestClose={() => setShowMessageOptions(false)}>
       <TouchableWithoutFeedback onPress={() => setShowMessageOptions(false)}>
         <View style={styles.optionsOverlay}>
@@ -817,17 +765,7 @@ const ChatDetailScreen = () => {
             <View style={[styles.optionsContainer, { backgroundColor: colors.background }]}>
               <Text style={[styles.optionsTitle, { color: colors.textSecondary }]}>Tùy chọn tin nhắn</Text>
 
-              {/* Thu hồi */}
-              {!selectedMessage?.isRevoked && (
-                <TouchableOpacity style={styles.optionItem} onPress={revokeMessage}>
-                  <View style={[styles.optionIcon, { backgroundColor: '#FF9800' + '20' }]}>
-                    <Ionicons name="arrow-undo-outline" size={20} color="#FF9800" />
-                  </View>
-                  <Text style={[styles.optionText, { color: '#FF9800' }]}>Thu hồi tin nhắn</Text>
-                </TouchableOpacity>
-              )}
-
-              {/* Ghim */}
+              {/* Ghim — ai cũng ghim được */}
               {!selectedMessage?.isRevoked && (
                 <TouchableOpacity style={styles.optionItem} onPress={pinMessage}>
                   <View style={[styles.optionIcon, { backgroundColor: '#2196F3' + '20' }]}>
@@ -839,19 +777,31 @@ const ChatDetailScreen = () => {
                 </TouchableOpacity>
               )}
 
-              {/* Xóa */}
-              <TouchableOpacity style={styles.optionItem} onPress={() => {
-                setShowMessageOptions(false);
-                Alert.alert('Xóa tin nhắn', 'Bạn có chắc muốn xóa tin nhắn này?', [
-                  { text: 'Hủy', style: 'cancel' },
-                  { text: 'Xóa', style: 'destructive', onPress: deleteMessage },
-                ]);
-              }}>
-                <View style={[styles.optionIcon, { backgroundColor: '#F44336' + '20' }]}>
-                  <Ionicons name="trash-outline" size={20} color="#F44336" />
-                </View>
-                <Text style={[styles.optionText, { color: '#F44336' }]}>Xóa tin nhắn</Text>
-              </TouchableOpacity>
+              {/* Thu hồi — chỉ tin nhắn của mình */}
+              {isMyMsg && !selectedMessage?.isRevoked && (
+                <TouchableOpacity style={styles.optionItem} onPress={revokeMessage}>
+                  <View style={[styles.optionIcon, { backgroundColor: '#FF9800' + '20' }]}>
+                    <Ionicons name="arrow-undo-outline" size={20} color="#FF9800" />
+                  </View>
+                  <Text style={[styles.optionText, { color: '#FF9800' }]}>Thu hồi tin nhắn</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Xóa — chỉ tin nhắn của mình */}
+              {isMyMsg && (
+                <TouchableOpacity style={styles.optionItem} onPress={() => {
+                  setShowMessageOptions(false);
+                  Alert.alert('Xóa tin nhắn', 'Bạn có chắc muốn xóa tin nhắn này?', [
+                    { text: 'Hủy', style: 'cancel' },
+                    { text: 'Xóa', style: 'destructive', onPress: deleteMessage },
+                  ]);
+                }}>
+                  <View style={[styles.optionIcon, { backgroundColor: '#F44336' + '20' }]}>
+                    <Ionicons name="trash-outline" size={20} color="#F44336" />
+                  </View>
+                  <Text style={[styles.optionText, { color: '#F44336' }]}>Xóa tin nhắn</Text>
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity style={styles.optionItem} onPress={() => setShowMessageOptions(false)}>
                 <View style={[styles.optionIcon, { backgroundColor: colors.backgroundElement }]}>
@@ -864,7 +814,8 @@ const ChatDetailScreen = () => {
         </View>
       </TouchableWithoutFeedback>
     </Modal>
-  );
+    );
+  };
 
   if (loading) {
     return (
@@ -885,7 +836,6 @@ const ChatDetailScreen = () => {
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
         <StatusBar barStyle={scheme === 'dark' ? 'light-content' : 'dark-content'} />
         {renderImageViewer()}
-        {renderReactionPicker()}
         {renderMessageOptions()}
 
         {/* Header */}
@@ -1007,6 +957,16 @@ const styles = StyleSheet.create({
   avatarText: { fontSize: 16, fontWeight: 'bold' },
   avatarPlaceholder: { width: 44 },
   messageBubble: { maxWidth: '70%', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 18 },
+  // ✅ Bubble ảnh: không background, không padding — ảnh chiếm toàn bộ
+  imageBubble: { maxWidth: '70%', borderRadius: 14, overflow: 'hidden' },
+  // ✅ Giờ và tick overlay lên góc dưới ảnh giống Zalo
+  imageFooterOverlay: {
+    position: 'absolute', bottom: 6, right: 8,
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 10,
+    paddingHorizontal: 5, paddingVertical: 2,
+  },
+  imageFooterTime: { fontSize: 10, color: '#fff' },
   myMessage: { borderBottomRightRadius: 4 },
   otherMessage: { borderBottomLeftRadius: 4 },
   mediaBubble: { padding: 4, paddingBottom: 8 },
