@@ -1,3 +1,4 @@
+import { API_BASE } from '@/constants/api';
 import { Colors } from '@/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -13,10 +14,10 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  useColorScheme,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 
 // Định nghĩa type cho User
 type User = {
@@ -31,7 +32,7 @@ type User = {
 const contacts = () => {
   const router = useRouter();
   const scheme = useColorScheme();
-  const colors = Colors['light'];
+  const colors = Colors[scheme === 'dark' ? 'dark' : 'light'];
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [users, setUsers] = useState<User[]>([]);
@@ -44,9 +45,9 @@ const fetchUsers = async () => {
     const token = await AsyncStorage.getItem('userToken');
       console.log('🔑 Token gốc:', token);
     
-    const url = filter === 'online' 
-      ? 'http://103.82.25.230:3001/api/users/online'
-      : `http://103.82.25.230:3001/api/users${searchQuery ? `?search=${searchQuery}` : ''}`;
+    const url = filter === 'online'
+      ? `${API_BASE}/api/users/online`
+      : `${API_BASE}/api/users${searchQuery ? `?search=${searchQuery}` : ''}`;
     
     console.log('📡 Fetching from:', url); // Debug URL
     

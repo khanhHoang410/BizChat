@@ -1,3 +1,4 @@
+import { API_BASE } from '@/constants/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { io, Socket } from 'socket.io-client';
 
@@ -5,7 +6,7 @@ class SocketService {
   private socket: Socket | null = null;
 
   connect() {
-    this.socket = io('http://103.82.25.230:3001', {
+    this.socket = io(API_BASE, {
       transports: ['websocket'],
       autoConnect: true,
     });

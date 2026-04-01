@@ -1,3 +1,4 @@
+import { API_BASE } from '@/constants/api';
 import { Colors } from '@/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -14,9 +15,10 @@ import {
     Text,
     TouchableOpacity,
     View,
-    useColorScheme,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Switch, Alert } from 'react-native';
+import { useAppColorScheme } from '@/hooks/use-color-scheme';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,7 +42,7 @@ type UserInfo = {
 
 type Tab = 'images' | 'files' | 'links';
 
-const BASE_URL = 'http://103.82.25.230:3001';
+const BASE_URL = API_BASE;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -79,7 +81,8 @@ const getFileIconColor = (type: string) => {
 const ChatInfoScreen = () => {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const scheme = useColorScheme();
+  const { resolvedScheme } = useAppColorScheme();
+  const scheme = resolvedScheme;
   const colors = Colors[scheme === 'dark' ? 'dark' : 'light'];
 
   const [activeTab, setActiveTab] = useState<Tab>('images');
@@ -89,6 +92,7 @@ const ChatInfoScreen = () => {
   const [links, setLinks] = useState<{ url: string; content: string; createdAt: string }[]>([]);
   const [loadingUser, setLoadingUser] = useState(true);
   const [loadingFiles, setLoadingFiles] = useState(true);
+  const [muted, setMuted] = useState(false);
 
   const getToken = () => AsyncStorage.getItem('userToken');
 
@@ -106,6 +110,20 @@ const ChatInfoScreen = () => {
       console.error('fetchUserInfo:', e);
     } finally {
       setLoadingUser(false);
+    }
+  };
+
+  const fetchMuteState = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/api/auth/profile`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      const mutedUsers: any[] = data?.user?.settings?.mutedUsers || [];
+      setMuted(mutedUsers.some((x: any) => String(x) === String(id)));
+    } catch {
+      // ignore
     }
   };
 
@@ -177,7 +195,24 @@ const ChatInfoScreen = () => {
     fetchUserInfo();
     fetchFiles();
     fetchLinks();
+    fetchMuteState();
   }, [id]);
+
+  const updateMute = async (value: boolean) => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/api/users/notification-preferences`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ targetType: 'private', targetId: id, muted: value }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Không thể cập nhật');
+      setMuted(value);
+    } catch (e: any) {
+      Alert.alert('Lỗi', e?.message || 'Không thể cập nhật cài đặt thông báo');
+    }
+  };
 
   // ─── Render tabs ──────────────────────────────────────────────────────────
 
@@ -366,6 +401,25 @@ const ChatInfoScreen = () => {
                 <Text style={styles.actionButtonText}>Nhắn tin</Text>
               </TouchableOpacity>
             </View>
+          </View>
+
+          {/* Notification setting */}
+          <View style={[styles.fileItem, { borderBottomColor: colors.borderColor }]}>
+            <View style={[styles.fileIconContainer, { backgroundColor: colors.tint + '20' }]}>
+              <Ionicons name="notifications-outline" size={24} color={colors.tint} />
+            </View>
+            <View style={styles.fileItemInfo}>
+              <Text style={[styles.fileItemName, { color: colors.text }]}>Tắt thông báo</Text>
+              <Text style={[styles.fileItemMeta, { color: colors.textSecondary }]}>
+                Áp dụng riêng cho cuộc trò chuyện này
+              </Text>
+            </View>
+            <Switch
+              value={muted}
+              onValueChange={updateMute}
+              trackColor={{ false: colors.borderColor, true: colors.tint }}
+              thumbColor="#fff"
+            />
           </View>
 
           {/* Tabs */}

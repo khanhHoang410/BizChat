@@ -23,9 +23,10 @@ import {
   TouchableOpacity,
   TouchableWithoutFeedback,
   View,
-  useColorScheme,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { API_BASE } from '@/constants/api';
 import socketService from '../lib/socket';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -40,6 +41,7 @@ type Message = {
   isRevoked?: boolean;
   pinned?: boolean;
   pinnedAt?: string;
+  reactions?: { user: string; emoji: string }[];
 };
 
 type UserInfo = {
@@ -57,7 +59,7 @@ type GroupInfo = {
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const BASE_URL = 'http://103.82.25.230:3001';
+const BASE_URL = API_BASE;
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const EMOJI_CATEGORIES = [
@@ -96,6 +98,7 @@ const ChatDetailScreen = () => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const [showMessageOptions, setShowMessageOptions] = useState(false);
+  const [showReactionPicker, setShowReactionPicker] = useState(false);
   // Tin nhắn được ghim (hiện banner đầu màn hình)
   const [pinnedMessage, setPinnedMessage] = useState<Message | null>(null);
 
@@ -267,6 +270,10 @@ const ChatDetailScreen = () => {
       });
     };
 
+    const handleReactionUpdated = ({ messageId, reactions }: { messageId: string; reactions: { user: string; emoji: string }[] }) => {
+      setMessages(prev => prev.map(m => m._id === messageId ? { ...m, reactions } : m));
+    };
+
     socket.on('receive_message', handleReceiveMessage);
     socket.on('user_typing', handleUserTyping);
     socket.on('messages_read', handleMessagesRead);
@@ -274,6 +281,7 @@ const ChatDetailScreen = () => {
     socket.on('message_error', handleMessageError);
     socket.on('message_revoked', handleMessageRevoked);
     socket.on('message_pinned', handleMessagePinned);
+    socket.on('message_reaction_updated', handleReactionUpdated);
 
     if (type === 'group' && socket.connected) socket.emit('join_group', id);
 
@@ -285,6 +293,7 @@ const ChatDetailScreen = () => {
       socket.off('message_error', handleMessageError);
       socket.off('message_revoked', handleMessageRevoked);
       socket.off('message_pinned', handleMessagePinned);
+      socket.off('message_reaction_updated', handleReactionUpdated);
     };
   }, [id, type]);
 
@@ -437,11 +446,32 @@ const ChatDetailScreen = () => {
   // ─── Message actions ─────────────────────────────────────────────────────────
   // ✅ FIX: Cho phép long press cả tin nhắn của mình kể cả ảnh/file
   const handleLongPressMessage = (message: Message) => {
-    if (message.sender._id !== currentUser?._id) return;
     if (message._id.startsWith('temp_')) return;
     if (message.isRevoked) return; // Đã thu hồi rồi thì không show options
     setSelectedMessage(message);
-    setShowMessageOptions(true);
+    setShowReactionPicker(true);
+  };
+
+  const reactToMessage = async (emoji: string) => {
+    if (!selectedMessage) return;
+    setShowReactionPicker(false);
+    try {
+      const socket = socketService.getSocket();
+      if (socket?.connected) {
+        socket.emit('react_message', { messageId: selectedMessage._id, emoji });
+        return;
+      }
+      const token = await getToken();
+      await fetch(`${BASE_URL}/api/chat/${selectedMessage._id}/reactions`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ emoji }),
+      });
+    } catch (e) {
+      console.error('React error:', e);
+    } finally {
+      setSelectedMessage(null);
+    }
   };
 
   const deleteMessage = async () => {
@@ -675,6 +705,17 @@ const ChatDetailScreen = () => {
       <Text style={[styles.messageText, { color: isMyMessage ? '#fff' : colors.text }]}>{item.content}</Text>
     );
 
+    const reactionSummary = (item.reactions || []).reduce<Record<string, number>>((acc, r) => {
+      if (!r?.emoji) return acc;
+      acc[r.emoji] = (acc[r.emoji] || 0) + 1;
+      return acc;
+    }, {});
+    const reactionLine = Object.entries(reactionSummary)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([emoji, count]) => `${emoji}${count > 1 ? ` ${count}` : ''}`)
+      .join('  ');
+
     return (
       // ✅ FIX: Toàn bộ message (kể cả ảnh) đều có onLongPress
       <TouchableOpacity
@@ -699,6 +740,14 @@ const ChatDetailScreen = () => {
               </View>
             ) : bubbleContent}
 
+            {!!reactionLine && (
+              <View style={{ marginTop: 6 }}>
+                <Text style={{ fontSize: 12, color: isMyMessage ? 'rgba(255,255,255,0.85)' : colors.textSecondary }}>
+                  {reactionLine}
+                </Text>
+              </View>
+            )}
+
             <View style={styles.messageFooter}>
               <Text style={[styles.messageTime, { color: isMyMessage ? 'rgba(255,255,255,0.6)' : colors.textSecondary }]}>
                 {formatTime(item.createdAt)}
@@ -717,6 +766,28 @@ const ChatDetailScreen = () => {
       </TouchableOpacity>
     );
   };
+
+  const QUICK_REACTIONS = ['❤️', '😂', '😮', '😢', '😡', '👍'];
+  const renderReactionPicker = () => (
+    <Modal visible={showReactionPicker} transparent animationType="fade" onRequestClose={() => setShowReactionPicker(false)}>
+      <TouchableWithoutFeedback onPress={() => { setShowReactionPicker(false); setSelectedMessage(null); }}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center' }}>
+          <TouchableWithoutFeedback>
+            <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 999, backgroundColor: colors.background }}>
+              {QUICK_REACTIONS.map((e) => (
+                <TouchableOpacity key={e} onPress={() => reactToMessage(e)} style={{ paddingHorizontal: 6, paddingVertical: 4 }}>
+                  <Text style={{ fontSize: 22 }}>{e}</Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity onPress={() => { setShowReactionPicker(false); setShowMessageOptions(true); }} style={{ paddingHorizontal: 6, paddingVertical: 6 }}>
+                <Ionicons name="ellipsis-horizontal" size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+          </TouchableWithoutFeedback>
+        </View>
+      </TouchableWithoutFeedback>
+    </Modal>
+  );
 
   const renderImageViewer = () => (
     <Modal visible={!!selectedImage} transparent animationType="fade" onRequestClose={() => setSelectedImage(null)}>
@@ -814,6 +885,7 @@ const ChatDetailScreen = () => {
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
         <StatusBar barStyle={scheme === 'dark' ? 'light-content' : 'dark-content'} />
         {renderImageViewer()}
+        {renderReactionPicker()}
         {renderMessageOptions()}
 
         {/* Header */}

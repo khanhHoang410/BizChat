@@ -18,11 +18,12 @@ import {
     TextInput,
     TouchableOpacity,
     View,
-    useColorScheme,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { API_BASE } from '@/constants/api';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 
-const BASE_URL = 'http://103.82.25.230:3001';
+const BASE_URL = API_BASE;
 
 type User = {
   _id: string;
@@ -35,7 +36,7 @@ type User = {
 const CreateGroupScreen = () => {
   const router = useRouter();
   const scheme = useColorScheme();
-  const colors = Colors['light'];
+  const colors = Colors[scheme === 'dark' ? 'dark' : 'light'];
 
   const [groupName, setGroupName] = useState('');
   const [description, setDescription] = useState('');

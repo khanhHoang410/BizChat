@@ -1,6 +1,8 @@
+import { API_BASE } from '@/constants/api';
 import { Colors } from '@/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
@@ -14,10 +16,10 @@ import {
   Text,
   TouchableOpacity,
   View,
-  useColorScheme,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import socketService from '../lib/socket';
+import { useAppColorScheme } from '@/hooks/use-color-scheme';
 
 type UserInfo = {
   id: string;
@@ -34,18 +36,20 @@ type UserInfo = {
 
 const ProfileScreen = () => {
   const router = useRouter();
-  const scheme = useColorScheme();
-  const colors = Colors['light'];
+  const { preference, resolvedScheme, setPreference } = useAppColorScheme();
+  const scheme = resolvedScheme;
+  const colors = Colors[scheme === 'dark' ? 'dark' : 'light'];
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<UserInfo | null>(null);
   const [notifications, setNotifications] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   // Fetch thông tin user
   const fetchUserProfile = async () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
-      const response = await fetch('http://103.82.25.230:3001/api/auth/profile', {
+      const response = await fetch(`${API_BASE}/api/auth/profile`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
@@ -70,7 +74,7 @@ const ProfileScreen = () => {
     setSaving(true);
     try {
       const token = await AsyncStorage.getItem('userToken');
-      const response = await fetch('http://103.82.25.230:3001/api/users/profile', {
+      const response = await fetch(`${API_BASE}/api/users/profile`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -81,12 +85,8 @@ const ProfileScreen = () => {
         })
       });
 
-      // if (response.ok) {
-      //   setUser(prev => prev ? {
-      //     ...prev,
-      //     settings: { ...prev.settings, [key]: value }
-      //   } : null);
-      // }
+      const data = await response.json();
+      if (response.ok && data.user) setUser(data.user);
     } catch (error) {
       console.error('Update settings error:', error);
     } finally {
@@ -107,7 +107,7 @@ const ProfileScreen = () => {
           onPress: async () => {
             try {
               const token = await AsyncStorage.getItem('userToken');
-              await fetch('http://103.82.25.230:3001/api/auth/logout', {
+              await fetch(`${API_BASE}/api/auth/logout`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}` }
               });
@@ -125,9 +125,62 @@ const ProfileScreen = () => {
     );
   };
 
+  const uploadAvatar = async (uri: string, mimeType?: string) => {
+    setUploadingAvatar(true);
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      const form = new FormData();
+      form.append('file', {
+        uri,
+        type: mimeType || 'image/jpeg',
+        name: `avatar_${Date.now()}.jpg`,
+      } as any);
+
+      const res = await fetch(`${API_BASE}/api/users/avatar`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Upload avatar failed');
+      if (data.user) setUser(data.user);
+    } catch (e: any) {
+      Alert.alert('Lỗi', e?.message || 'Không thể cập nhật avatar');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
   const handleChangeAvatar = () => {
-    // TODO: Implement chọn ảnh từ thư viện
-    Alert.alert('Thông báo', 'Tính năng đang phát triển');
+    Alert.alert('Đổi avatar', 'Chọn nguồn ảnh', [
+      {
+        text: 'Chụp ảnh',
+        onPress: async () => {
+          const { status } = await ImagePicker.requestCameraPermissionsAsync();
+          if (status !== 'granted') {
+            Alert.alert('Cần quyền', 'Vui lòng cho phép truy cập Camera trong Cài đặt.');
+            return;
+          }
+          const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, aspect: [1, 1], quality: 0.8 });
+          if (result.canceled || !result.assets?.[0]) return;
+          await uploadAvatar(result.assets[0].uri, result.assets[0].mimeType);
+        },
+      },
+      {
+        text: 'Chọn từ thư viện',
+        onPress: async () => {
+          const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (status !== 'granted') {
+            Alert.alert('Cần quyền', 'Vui lòng cho phép truy cập Thư viện ảnh trong Cài đặt.');
+            return;
+          }
+          const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.8 });
+          if (result.canceled || !result.assets?.[0]) return;
+          await uploadAvatar(result.assets[0].uri, result.assets[0].mimeType);
+        },
+      },
+      { text: 'Hủy', style: 'cancel' },
+    ]);
   };
 
   const handleEditName = () => {
@@ -169,7 +222,11 @@ const ProfileScreen = () => {
               </View>
             )}
             <View style={[styles.editBadge, { backgroundColor: colors.tint }]}>
-              <Ionicons name="camera" size={14} color="#fff" />
+              {uploadingAvatar ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Ionicons name="camera" size={14} color="#fff" />
+              )}
             </View>
           </TouchableOpacity>
           
@@ -230,9 +287,10 @@ const ProfileScreen = () => {
             </View>
             <Switch
               value={scheme === 'dark'}
-              onValueChange={() => {
-                // TODO: Implement theme switching
-                Alert.alert('Thông báo', 'Tính năng đang phát triển');
+              onValueChange={async (isDark) => {
+                const pref = isDark ? 'dark' : 'light';
+                await setPreference(pref);
+                await updateSettings('theme', pref);
               }}
               trackColor={{ false: colors.borderColor, true: colors.tint }}
               thumbColor="#fff"

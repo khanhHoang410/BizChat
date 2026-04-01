@@ -1,34 +1,91 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import * as Google from 'expo-auth-session/providers/google';
+import * as WebBrowser from 'expo-web-browser';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Dimensions,
+  Platform,
   StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View
+  View,
 } from 'react-native';
-import Animated, {
-  FadeInDown,
-  FadeInUp
-} from 'react-native-reanimated';
-
-const { width } = Dimensions.get('window');
+import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
+import {
+  GOOGLE_IOS_CLIENT_ID,
+  GOOGLE_WEB_CLIENT_ID,
+  postGoogleIdToken,
+} from '@/lib/googleBackendAuth';
 
 export default function RegisterScreen() {
+  return Platform.OS === 'web' ? <RegisterScreenWeb /> : <RegisterScreenNative />;
+}
+
+function RegisterScreenWeb() {
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    WebBrowser.maybeCompleteAuthSession();
+  }, []);
+
+  const [, , promptAsync] = Google.useIdTokenAuthRequest({
+    webClientId: GOOGLE_WEB_CLIENT_ID,
+    iosClientId: GOOGLE_IOS_CLIENT_ID,
+  });
+
+  const handleGoogleSignIn = async () => {
+    try {
+      setLoading(true);
+      const result = await promptAsync();
+      if (result?.type === 'success') {
+        const idToken = result.params?.id_token as string | undefined;
+        if (!idToken) {
+          Alert.alert(
+            'Lỗi',
+            'Không lấy được ID token từ Google (web). Kiểm tra Google Cloud Console (localhost + redirect URI).'
+          );
+          return;
+        }
+        const { ok, data } = await postGoogleIdToken(idToken);
+        if (ok) {
+          await AsyncStorage.setItem('userToken', (data as { token: string }).token);
+          await AsyncStorage.setItem('userInfo', JSON.stringify((data as { user: unknown }).user));
+          Alert.alert('🎉 Thành công', 'Tài khoản của bạn đã được tạo!', [
+            { text: 'Bắt đầu ngay', onPress: () => router.replace('/(tabs)') },
+          ]);
+        } else {
+          Alert.alert('Lỗi', (data as { error?: string })?.error || 'Đăng ký thất bại');
+        }
+      }
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error('❌ Google Sign-In error (web):', error);
+      if (!msg.toLowerCase().includes('cancel')) {
+        Alert.alert('Lỗi', msg || 'Đăng ký Google thất bại');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return <RegisterFormUI loading={loading} onGooglePress={handleGoogleSignIn} router={router} />;
+}
+
+function RegisterScreenNative() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     GoogleSignin.configure({
-      webClientId: '296490459621-9kib4m5h4oi1ppetnn7bteu7vbs8kjv5.apps.googleusercontent.com',
-      iosClientId: '296490459621-jsbtmljnv158ql755gflgakucomafqs6.apps.googleusercontent.com',
+      webClientId: GOOGLE_WEB_CLIENT_ID,
+      iosClientId: GOOGLE_IOS_CLIENT_ID,
       offlineAccess: false,
     });
   }, []);
@@ -38,75 +95,62 @@ export default function RegisterScreen() {
       setLoading(true);
       await GoogleSignin.hasPlayServices();
       const userInfo = await GoogleSignin.signIn();
-      const idToken = userInfo.data?.idToken ?? (userInfo as any).idToken;
+      const idToken = userInfo.data?.idToken ?? (userInfo as { idToken?: string }).idToken;
 
       if (!idToken) {
         throw new Error('Không lấy được ID token');
       }
-      
-      await handleGoogleLogin(idToken);
-      
-    } catch (error: any) {
+
+      const { ok, data } = await postGoogleIdToken(idToken);
+      if (ok) {
+        await AsyncStorage.setItem('userToken', (data as { token: string }).token);
+        await AsyncStorage.setItem('userInfo', JSON.stringify((data as { user: unknown }).user));
+        Alert.alert('🎉 Thành công', 'Tài khoản của bạn đã được tạo!', [
+          { text: 'Bắt đầu ngay', onPress: () => router.replace('/(tabs)') },
+        ]);
+      } else {
+        Alert.alert('Lỗi', (data as { error?: string })?.error || 'Đăng ký thất bại');
+      }
+    } catch (error: unknown) {
+      const err = error as { code?: string; message?: string };
       console.error('❌ Google Sign-In error:', error);
-      
-      if (error.code === 'SIGN_IN_CANCELLED') {
+
+      if (err.code === 'SIGN_IN_CANCELLED') {
         console.log('✋ User cancelled');
       } else {
-        Alert.alert('Lỗi', error.message || 'Đăng ký Google thất bại');
+        Alert.alert('Lỗi', err.message || 'Đăng ký Google thất bại');
       }
     } finally {
       setLoading(false);
     }
   };
 
-  const handleGoogleLogin = async (idToken: string) => {
-    try {
-      const res = await fetch('http://103.82.25.230:3001/api/auth/google', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: idToken })
-      });
+  return <RegisterFormUI loading={loading} onGooglePress={handleGoogleSignIn} router={router} />;
+}
 
-      const data = await res.json();
-
-      if (res.ok) {
-        await AsyncStorage.setItem('userToken', data.token);
-        await AsyncStorage.setItem('userInfo', JSON.stringify(data.user));
-        
-        Alert.alert('🎉 Thành công', 'Tài khoản của bạn đã được tạo!', [
-          { text: 'Bắt đầu ngay', onPress: () => router.replace('/(tabs)') }
-        ]);
-      } else {
-        Alert.alert('Lỗi', data.error || 'Đăng ký thất bại');
-      }
-    } catch (error) {
-      Alert.alert('Lỗi', 'Không thể kết nối đến server');
-    }
-  };
-
+function RegisterFormUI({
+  loading,
+  onGooglePress,
+  router,
+}: {
+  loading: boolean;
+  onGooglePress: () => void;
+  router: ReturnType<typeof useRouter>;
+}) {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
-      
-      {/* Background Decoration */}
+
       <View style={styles.circle1} />
       <View style={styles.circle2} />
-      
-      {/* Back button */}
+
       <Animated.View entering={FadeInUp.delay(200).duration(1000)}>
-        <TouchableOpacity 
-          style={styles.backButton}
-          onPress={() => router.back()}
-        >
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#333" />
         </TouchableOpacity>
       </Animated.View>
 
-      {/* Header với animation */}
-      <Animated.View 
-        entering={FadeInUp.delay(400).duration(1000)}
-        style={styles.header}
-      >
+      <Animated.View entering={FadeInUp.delay(400).duration(1000)} style={styles.header}>
         <View style={styles.logoContainer}>
           <LinearGradient
             colors={['#667eea', '#764ba2']}
@@ -124,11 +168,7 @@ export default function RegisterScreen() {
         </Text>
       </Animated.View>
 
-      {/* Features List */}
-      <Animated.View 
-        entering={FadeInDown.delay(600).duration(1000)}
-        style={styles.featuresContainer}
-      >
+      <Animated.View entering={FadeInDown.delay(600).duration(1000)} style={styles.featuresContainer}>
         <View style={styles.featureItem}>
           <View style={styles.featureIcon}>
             <Ionicons name="chatbubble-outline" size={20} color="#667eea" />
@@ -149,14 +189,10 @@ export default function RegisterScreen() {
         </View>
       </Animated.View>
 
-      {/* Google Register Button */}
-      <Animated.View 
-        entering={FadeInDown.delay(800).duration(1000)}
-        style={styles.form}
-      >
+      <Animated.View entering={FadeInDown.delay(800).duration(1000)} style={styles.form}>
         <TouchableOpacity
           style={styles.googleButton}
-          onPress={handleGoogleSignIn}
+          onPress={onGooglePress}
           disabled={loading}
           activeOpacity={0.9}
         >
@@ -167,25 +203,18 @@ export default function RegisterScreen() {
               <View style={styles.googleIconContainer}>
                 <Ionicons name="logo-google" size={24} color="#DB4437" />
               </View>
-              <Text style={styles.googleButtonText}>
-                Tiếp tục với Google
-              </Text>
+              <Text style={styles.googleButtonText}>Tiếp tục với Google</Text>
             </>
           )}
         </TouchableOpacity>
 
         <Text style={styles.termsText}>
-          Bằng việc tiếp tục, bạn đồng ý với{' '}
-          <Text style={styles.termsLink}>Điều khoản dịch vụ</Text> và{' '}
+          Bằng việc tiếp tục, bạn đồng ý với <Text style={styles.termsLink}>Điều khoản dịch vụ</Text> và{' '}
           <Text style={styles.termsLink}>Chính sách bảo mật</Text> của chúng tôi
         </Text>
       </Animated.View>
 
-      {/* Login Link */}
-      <Animated.View 
-        entering={FadeInDown.delay(1000).duration(1000)}
-        style={styles.footer}
-      >
+      <Animated.View entering={FadeInDown.delay(1000).duration(1000)} style={styles.footer}>
         <Text style={styles.footerText}>Đã có tài khoản? </Text>
         <TouchableOpacity onPress={() => router.push('/Login')}>
           <Text style={styles.loginLink}>Đăng nhập ngay</Text>

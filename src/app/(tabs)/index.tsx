@@ -1,3 +1,4 @@
+import { API_BASE } from '@/constants/api';
 import { Colors } from '@/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -14,10 +15,10 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  useColorScheme,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import socketService from '../lib/socket';
+import { useAppColorScheme } from '@/hooks/use-color-scheme';
 
 // Định nghĩa type cho Conversation
 type Conversation = {
@@ -35,8 +36,9 @@ type Conversation = {
 
 const HomeScreen = () => {
   const router = useRouter();
-  const scheme = useColorScheme();
-  const colors = Colors['light'];
+  const { resolvedScheme } = useAppColorScheme();
+  const scheme = resolvedScheme;
+  const colors = Colors[scheme === 'dark' ? 'dark' : 'light'];
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -47,7 +49,7 @@ const HomeScreen = () => {
   const fetchCurrentUser = async () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
-      const response = await fetch('http://103.82.25.230:3001/api/auth/profile', {
+      const response = await fetch(`${API_BASE}/api/auth/profile`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
@@ -61,7 +63,7 @@ const HomeScreen = () => {
   const fetchConversations = async () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
-      const response = await fetch('http://103.82.25.230:3001/api/chat/conversations', {
+      const response = await fetch(`${API_BASE}/api/chat/conversations`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();

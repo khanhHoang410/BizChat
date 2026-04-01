@@ -1,3 +1,4 @@
+import { API_BASE } from '@/constants/api';
 import { Colors } from '@/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -18,11 +19,11 @@ import {
   TouchableOpacity,
   TouchableWithoutFeedback,
   View,
-  useColorScheme,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAppColorScheme } from '@/hooks/use-color-scheme';
 
-const BASE_URL = 'http://103.82.25.230:3001';
+const BASE_URL = API_BASE;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -74,6 +75,7 @@ type RowItem =
   | { kind: 'section_members' }
   | { kind: 'member'; data: Member }
   | { kind: 'section_settings' }
+  | { kind: 'setting_notifications' }
   | { kind: 'setting_leave' }
   | { kind: 'setting_dissolve' }
   | { kind: 'footer' };
@@ -83,13 +85,15 @@ type RowItem =
 const GroupDetailScreen = () => {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const scheme = useColorScheme();
-  const colors = Colors['light'];
+  const { resolvedScheme } = useAppColorScheme();
+  const scheme = resolvedScheme;
+  const colors = Colors[scheme === 'dark' ? 'dark' : 'light'];
 
   const [group, setGroup] = useState<Group | null>(null);
   const [currentUser, setCurrentUser] = useState<UserInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [muted, setMuted] = useState(false);
 
   // Edit modal
   const [showEditModal, setShowEditModal] = useState(false);
@@ -118,6 +122,8 @@ const GroupDetailScreen = () => {
     });
     const data = await res.json();
     setCurrentUser(data.user);
+    const mutedGroups: any[] = data?.user?.settings?.mutedGroups || [];
+    setMuted(mutedGroups.some((x: any) => String(x) === String(id)));
   };
 
   const fetchGroup = useCallback(async () => {
@@ -144,6 +150,22 @@ const GroupDetailScreen = () => {
     fetchCurrentUser();
     fetchGroup();
   }, []);
+
+  const updateMute = async (value: boolean) => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/api/users/notification-preferences`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ targetType: 'group', targetId: id, muted: value }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Không thể cập nhật');
+      setMuted(value);
+    } catch (e: any) {
+      Alert.alert('Lỗi', e?.message || 'Không thể cập nhật cài đặt thông báo');
+    }
+  };
 
   // ─── Permissions ────────────────────────────────────────────────────────────
 
@@ -339,6 +361,7 @@ const GroupDetailScreen = () => {
       { kind: 'section_members' },
       ...group.members.map(m => ({ kind: 'member' as const, data: m })),
       { kind: 'section_settings' },
+      { kind: 'setting_notifications' },
       { kind: 'setting_leave' },
       ...(isOwner ? [{ kind: 'setting_dissolve' as const }] : []),
       { kind: 'footer' },
@@ -538,6 +561,22 @@ const GroupDetailScreen = () => {
         return (
           <View style={[styles.sectionHeader, { backgroundColor: colors.backgroundElement, marginTop: 8 }]}>
             <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>THAO TÁC</Text>
+          </View>
+        );
+
+      case 'setting_notifications':
+        return (
+          <View style={[styles.dangerRow, { borderBottomColor: colors.borderColor }]}>
+            <View style={[styles.dangerIconWrap, { backgroundColor: colors.tint + '15' }]}>
+              <Ionicons name="notifications-outline" size={20} color={colors.tint} />
+            </View>
+            <Text style={[styles.dangerLabel, { color: colors.text }]}>Tắt thông báo nhóm</Text>
+            <Switch
+              value={muted}
+              onValueChange={updateMute}
+              trackColor={{ false: colors.borderColor, true: colors.tint }}
+              thumbColor="#fff"
+            />
           </View>
         );
 
