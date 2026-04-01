@@ -96,86 +96,55 @@ const ChatDetailScreen = () => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const [showMessageOptions, setShowMessageOptions] = useState(false);
+  // Tin nhắn được ghim (hiện banner đầu màn hình)
+  const [pinnedMessage, setPinnedMessage] = useState<Message | null>(null);
 
   const getToken = () => AsyncStorage.getItem('userToken');
 
-  // ─── Socket events for call (giữ nguyên) ────────────────────────────────────
+  // ─── Socket events for call ──────────────────────────────────────────────────
   useEffect(() => {
     const socket = socketService.getSocket();
     if (!socket) return;
-
     socket.on('group_call_offer', ({ groupId, channelName, callerName }) => {
       if (groupId === id) {
-        Alert.alert(
-          'Cuộc gọi nhóm',
-          `${callerName} đang gọi video nhóm...`,
-          [
-            { text: 'Từ chối', style: 'cancel' },
-            { text: 'Tham gia', onPress: () => {
-                router.push({
-                  pathname: '/call/[channelName]',
-                  params: { channelName, targetId: groupId, isGroup: 'true' }
-                });
-              }
-            }
-          ]
-        );
+        Alert.alert('Cuộc gọi nhóm', `${callerName} đang gọi video nhóm...`, [
+          { text: 'Từ chối', style: 'cancel' },
+          { text: 'Tham gia', onPress: () => router.push({ pathname: '/call/[channelName]', params: { channelName, targetId: groupId, isGroup: 'true' } }) },
+        ]);
       }
     });
-
-    return () => {
-      socket.off('group_call_offer');
-    };
+    return () => { socket.off('group_call_offer'); };
   }, [id]);
 
   useEffect(() => {
     const socket = socketService.getSocket();
     if (!socket) return;
-
     socket.on('incoming_call', ({ from, channelName, callerName }) => {
-      Alert.alert(
-        'Cuộc gọi đến',
-        `${callerName} đang gọi video...`,
-        [
-          { text: 'Từ chối', style: 'cancel', onPress: () => socket.emit('call_reject', { to: from }) },
-          { text: 'Trả lời', onPress: () => {
-              socket.emit('call_accept', { to: from, channelName });
-              router.push({
-                pathname: '/call/[channelName]',
-                params: { channelName, targetId: from, isGroup: 'false' },
-              });
-            }
-          }
-        ]
-      );
+      Alert.alert('Cuộc gọi đến', `${callerName} đang gọi video...`, [
+        { text: 'Từ chối', style: 'cancel', onPress: () => socket.emit('call_reject', { to: from }) },
+        { text: 'Trả lời', onPress: () => {
+          socket.emit('call_accept', { to: from, channelName });
+          router.push({ pathname: '/call/[channelName]', params: { channelName, targetId: from, isGroup: 'false' } });
+        }},
+      ]);
     });
-
-    return () => {
-      socket.off('incoming_call');
-    };
+    return () => { socket.off('incoming_call'); };
   }, []);
 
-  // ─── Fetch functions ────────────────────────────────────────────────────────
+  // ─── Fetch functions ─────────────────────────────────────────────────────────
   const fetchCurrentUser = async () => {
     try {
       const token = await getToken();
-      const response = await fetch(`${BASE_URL}/api/auth/profile`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const response = await fetch(`${BASE_URL}/api/auth/profile`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await response.json();
-      const user = data.user;
-      if (user) {
-        setCurrentUser({ _id: user.id, name: user.name, avatar: user.avatar, status: user.status });
-      }
+      if (data.user) setCurrentUser({ _id: data.user.id, name: data.user.name, avatar: data.user.avatar, status: data.user.status });
     } catch (error) { console.error('Fetch current user error:', error); }
   };
 
   const fetchUserInfo = async () => {
     try {
       const token = await getToken();
-      const response = await fetch(`${BASE_URL}/api/users/${id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const response = await fetch(`${BASE_URL}/api/users/${id}`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await response.json();
       setUserInfo(data.user);
     } catch (error) { console.error('Fetch user info error:', error); }
@@ -184,39 +153,30 @@ const ChatDetailScreen = () => {
   const fetchGroupInfo = async () => {
     try {
       const token = await getToken();
-      const res = await fetch(`${BASE_URL}/api/groups/${id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch(`${BASE_URL}/api/groups/${id}`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
-      if (res.ok) {
-        setGroupInfo({
-          _id: data.group._id,
-          name: data.group.name,
-          avatar: data.group.avatar,
-          membersCount: data.group.members.length,
-        });
-      }
+      if (res.ok) setGroupInfo({ _id: data.group._id, name: data.group.name, avatar: data.group.avatar, membersCount: data.group.members.length });
     } catch (error) { console.error('Fetch group info error:', error); }
   };
 
   const fetchMessages = async () => {
     try {
       const token = await getToken();
-      const response = await fetch(`${BASE_URL}/api/chat/messages/${id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const response = await fetch(`${BASE_URL}/api/chat/messages/${id}`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await response.json();
-      setMessages(data.messages || []);
+      const msgs: Message[] = data.messages || [];
+      setMessages(msgs);
+      // Lấy tin nhắn ghim mới nhất
+      const pinned = msgs.filter(m => m.pinned).sort((a, b) => new Date(b.pinnedAt || 0).getTime() - new Date(a.pinnedAt || 0).getTime())[0];
+      setPinnedMessage(pinned || null);
     } catch (error) { console.error('Fetch messages error:', error); }
     finally { setLoading(false); }
   };
 
-  // ─── Mark as read (private) ────────────────────────────────────────────────
+  // ─── Mark as read ─────────────────────────────────────────────────────────────
   const markMessagesAsRead = useCallback(async (msgs: Message[], user: UserInfo) => {
     if (hasMarkedReadRef.current || type === 'group') return;
-    const unreadIds = msgs
-      .filter(msg => msg.sender._id !== user._id && !msg.readBy.includes(user._id))
-      .map(msg => msg._id);
+    const unreadIds = msgs.filter(msg => msg.sender._id !== user._id && !msg.readBy.includes(user._id)).map(msg => msg._id);
     if (unreadIds.length === 0) return;
     hasMarkedReadRef.current = true;
     try {
@@ -226,38 +186,25 @@ const ChatDetailScreen = () => {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ messageIds: unreadIds }),
       });
-      setMessages(prev => prev.map(msg => ({
-        ...msg,
-        readBy: unreadIds.includes(msg._id) ? [...msg.readBy, user._id] : msg.readBy,
-      })));
+      setMessages(prev => prev.map(msg => ({ ...msg, readBy: unreadIds.includes(msg._id) ? [...msg.readBy, user._id] : msg.readBy })));
       const socket = socketService.getSocket();
-      if (socket?.connected) {
-        socket.emit('messages_read', { messageIds: unreadIds, readerId: user._id, senderId: id });
-      }
-    } catch (error) {
-      hasMarkedReadRef.current = false;
-    }
+      if (socket?.connected) socket.emit('messages_read', { messageIds: unreadIds, readerId: user._id, senderId: id });
+    } catch { hasMarkedReadRef.current = false; }
   }, [id, type]);
 
   useEffect(() => {
     onViewableItemsChanged.current = ({ viewableItems }: { viewableItems: Array<{ item: Message }> }) => {
       if (!currentUser || type === 'group') return;
       const visibleIds = viewableItems.map(v => v.item._id);
-      const hasUnread = messages.some(
-        msg => visibleIds.includes(msg._id) && msg.sender._id !== currentUser._id && !msg.readBy.includes(currentUser._id)
-      );
+      const hasUnread = messages.some(msg => visibleIds.includes(msg._id) && msg.sender._id !== currentUser._id && !msg.readBy.includes(currentUser._id));
       if (hasUnread) markMessagesAsRead(messages, currentUser);
     };
   }, [messages, currentUser, markMessagesAsRead, type]);
 
-  // ─── Socket (chính) ─────────────────────────────────────────────────────────
+  // ─── Socket (chính) ──────────────────────────────────────────────────────────
   useEffect(() => {
     fetchCurrentUser();
-    if (type === 'group') {
-      fetchGroupInfo();
-    } else {
-      fetchUserInfo();
-    }
+    if (type === 'group') fetchGroupInfo(); else fetchUserInfo();
     fetchMessages();
 
     const socket = socketService.getSocket();
@@ -275,9 +222,7 @@ const ChatDetailScreen = () => {
     };
 
     const handleUserTyping = (data: any) => {
-      if (type === 'private' && data.userId === id) {
-        setOtherUserTyping(data.isTyping);
-      }
+      if (type === 'private' && data.userId === id) setOtherUserTyping(data.isTyping);
     };
 
     const handleMessagesRead = (data: { messageIds: string[]; readerId: string }) => {
@@ -297,20 +242,29 @@ const ChatDetailScreen = () => {
       setMessages(prev => prev.filter(msg => !msg._id.startsWith('temp_')));
     };
 
-    // ✨ NEW: revoke message
+    // ✅ FIX: Thu hồi — xóa attachments và đổi type về text
     const handleMessageRevoked = ({ messageId }: { messageId: string }) => {
       setMessages(prev => prev.map(msg =>
         msg._id === messageId
-          ? { ...msg, content: 'Tin nhắn đã được thu hồi', isRevoked: true, attachments: [] }
+          ? { ...msg, content: 'Tin nhắn đã được thu hồi', isRevoked: true, type: 'text', attachments: [] }
           : msg
       ));
     };
 
-    // ✨ NEW: pin message
-    const handleMessagePinned = ({ messageId, pinned }: { messageId: string; pinned: boolean }) => {
-      setMessages(prev => prev.map(msg =>
-        msg._id === messageId ? { ...msg, pinned } : msg
-      ));
+    // ✅ Ghim — cập nhật pinnedMessage banner
+    const handleMessagePinned = ({ messageId, pinned, pinnedAt }: { messageId: string; pinned: boolean; pinnedAt?: string }) => {
+      setMessages(prev => {
+        const updated = prev.map(msg => msg._id === messageId ? { ...msg, pinned, pinnedAt } : msg);
+        if (pinned) {
+          const msg = updated.find(m => m._id === messageId);
+          if (msg) setPinnedMessage(msg);
+        } else {
+          // Nếu bỏ ghim → tìm tin nhắn ghim khác còn lại
+          const remaining = updated.filter(m => m.pinned).sort((a, b) => new Date(b.pinnedAt || 0).getTime() - new Date(a.pinnedAt || 0).getTime());
+          setPinnedMessage(remaining[0] || null);
+        }
+        return updated;
+      });
     };
 
     socket.on('receive_message', handleReceiveMessage);
@@ -321,9 +275,7 @@ const ChatDetailScreen = () => {
     socket.on('message_revoked', handleMessageRevoked);
     socket.on('message_pinned', handleMessagePinned);
 
-    if (type === 'group' && socket.connected) {
-      socket.emit('join_group', id);
-    }
+    if (type === 'group' && socket.connected) socket.emit('join_group', id);
 
     return () => {
       socket.off('receive_message', handleReceiveMessage);
@@ -336,24 +288,20 @@ const ChatDetailScreen = () => {
     };
   }, [id, type]);
 
-  // ─── Typing handler ─────────────────────────────────────────────────────────
+  // ─── Typing ──────────────────────────────────────────────────────────────────
   const handleTyping = (text: string) => {
     setInputText(text);
     const socket = socketService.getSocket();
     if (!socket?.connected) return;
-    const eventData = type === 'group'
-      ? { groupId: id, isTyping: text.length > 0 }
-      : { receiverId: id, isTyping: text.length > 0 };
+    const eventData = type === 'group' ? { groupId: id, isTyping: text.length > 0 } : { receiverId: id, isTyping: text.length > 0 };
     socket.emit('typing', eventData);
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
     if (text.length > 0) {
-      typingTimerRef.current = setTimeout(() => {
-        socket.emit('typing', { ...eventData, isTyping: false });
-      }, 2000);
+      typingTimerRef.current = setTimeout(() => { socket.emit('typing', { ...eventData, isTyping: false }); }, 2000);
     }
   };
 
-  // ─── Send text message ──────────────────────────────────────────────────────
+  // ─── Send text ───────────────────────────────────────────────────────────────
   const sendMessage = async () => {
     if (!inputText.trim() || sending) return;
     const messageContent = inputText.trim();
@@ -364,216 +312,134 @@ const ChatDetailScreen = () => {
     const socket = socketService.getSocket();
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
     if (socket?.connected) {
-      if (type === 'group') {
-        socket.emit('typing', { groupId: id, isTyping: false });
-      } else {
-        socket.emit('typing', { receiverId: id, isTyping: false });
-      }
+      type === 'group'
+        ? socket.emit('typing', { groupId: id, isTyping: false })
+        : socket.emit('typing', { receiverId: id, isTyping: false });
     }
 
     const tempId = `temp_${Date.now()}`;
     const newMsg: Message = {
       _id: tempId,
       sender: { _id: currentUser?._id || '', name: currentUser?.name || '', avatar: currentUser?.avatar },
-      content: messageContent,
-      type: 'text',
-      createdAt: new Date().toISOString(),
-      readBy: [],
+      content: messageContent, type: 'text', createdAt: new Date().toISOString(), readBy: [],
     };
     setMessages(prev => [...prev, newMsg]);
     flatListRef.current?.scrollToEnd({ animated: true });
 
     if (socket?.connected) {
-      if (type === 'group') {
-        socket.emit('send_group_message', { groupId: id, content: messageContent, type: 'text' });
-      } else {
-        socket.emit('send_private_message', { receiverId: id, content: messageContent, type: 'text' });
-      }
+      type === 'group'
+        ? socket.emit('send_group_message', { groupId: id, content: messageContent, type: 'text' })
+        : socket.emit('send_private_message', { receiverId: id, content: messageContent, type: 'text' });
     } else {
       try {
         const token = await getToken();
-        const body = type === 'group'
-          ? { groupId: id, content: messageContent, type: 'text' }
-          : { receiverId: id, content: messageContent, type: 'text' };
+        const body = type === 'group' ? { groupId: id, content: messageContent, type: 'text' } : { receiverId: id, content: messageContent, type: 'text' };
         const response = await fetch(`${BASE_URL}/api/chat/send`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify(body),
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body),
         });
         const data = await response.json();
-        if (data.message) {
-          setMessages(prev => prev.map(msg => (msg._id === tempId ? data.message : msg)));
-        } else {
-          setMessages(prev => prev.filter(msg => msg._id !== tempId));
-        }
-      } catch {
-        setMessages(prev => prev.filter(msg => msg._id !== tempId));
-      }
+        if (data.message) setMessages(prev => prev.map(msg => msg._id === tempId ? data.message : msg));
+        else setMessages(prev => prev.filter(msg => msg._id !== tempId));
+      } catch { setMessages(prev => prev.filter(msg => msg._id !== tempId)); }
     }
     setSending(false);
   };
 
-  // ─── Send image ─────────────────────────────────────────────────────────────
+  // ─── Send image ──────────────────────────────────────────────────────────────
   const pickAndSendImage = async () => {
     setShowAttachMenu(false);
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Cần quyền truy cập', 'Cho phép ứng dụng truy cập thư viện ảnh trong Cài đặt.');
-      return;
-    }
+    if (status !== 'granted') { Alert.alert('Cần quyền truy cập', 'Cho phép ứng dụng truy cập thư viện ảnh trong Cài đặt.'); return; }
 
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: false,
-      quality: 0.7,
-    });
-
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: false, quality: 0.7 });
     if (result.canceled || !result.assets?.[0]) return;
     const asset = result.assets[0];
     setUploadingImage(true);
 
     const tempId = `temp_${Date.now()}`;
-    const newMsg: Message = {
+    setMessages(prev => [...prev, {
       _id: tempId,
       sender: { _id: currentUser?._id || '', name: currentUser?.name || '', avatar: currentUser?.avatar },
-      content: '📷 Ảnh',
-      type: 'image',
-      createdAt: new Date().toISOString(),
-      readBy: [],
+      content: '📷 Ảnh', type: 'image', createdAt: new Date().toISOString(), readBy: [],
       attachments: [{ url: asset.uri, type: 'image', name: 'photo.jpg' }],
-    };
-    setMessages(prev => [...prev, newMsg]);
+    }]);
     setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
 
     try {
       const token = await getToken();
       const formData = new FormData();
       formData.append('file', { uri: asset.uri, type: asset.mimeType || 'image/jpeg', name: `photo_${Date.now()}.jpg` } as any);
-      if (type === 'group') {
-        formData.append('groupId', id as string);
-      } else {
-        formData.append('receiverId', id as string);
-      }
+      type === 'group' ? formData.append('groupId', id as string) : formData.append('receiverId', id as string);
 
-      const uploadRes = await fetch(`${BASE_URL}/api/chat/upload/image`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
+      const uploadRes = await fetch(`${BASE_URL}/api/chat/upload/image`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: formData });
       const uploadData = await uploadRes.json();
       const imageUrl = uploadData.file?.url || asset.uri;
 
-      setMessages(prev => prev.map(m =>
-        m._id === tempId ? { ...m, attachments: [{ url: imageUrl, type: 'image', name: 'photo.jpg' }] } : m
-      ));
+      setMessages(prev => prev.map(m => m._id === tempId ? { ...m, attachments: [{ url: imageUrl, type: 'image', name: 'photo.jpg' }] } : m));
 
       const socket = socketService.getSocket();
       if (socket?.connected) {
-        const messageData = {
-          content: '📷 Ảnh',
-          type: 'image',
-          attachments: [{ url: imageUrl, type: 'image', name: 'photo.jpg' }],
-        };
-        if (type === 'group') {
-          socket.emit('send_group_message', { groupId: id, ...messageData });
-        } else {
-          socket.emit('send_private_message', { receiverId: id, ...messageData });
-        }
+        const messageData = { content: '📷 Ảnh', type: 'image', attachments: [{ url: imageUrl, type: 'image', name: 'photo.jpg' }] };
+        type === 'group'
+          ? socket.emit('send_group_message', { groupId: id, ...messageData })
+          : socket.emit('send_private_message', { receiverId: id, ...messageData });
       }
-    } catch (e) {
-      console.error('Upload image error:', e);
-    } finally {
-      setUploadingImage(false);
-    }
+    } catch (e) { console.error('Upload image error:', e); }
+    finally { setUploadingImage(false); }
   };
 
-  // ─── Send file (including video) ──────────────────────────────────────────────
+  // ─── Send file ───────────────────────────────────────────────────────────────
   const pickAndSendFile = async () => {
     setShowAttachMenu(false);
-
     const result = await DocumentPicker.getDocumentAsync({
-      type: [
-        'application/pdf',
-        'application/msword',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'application/vnd.ms-excel',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'application/zip', 'application/x-zip-compressed',
-        'video/*', 'audio/*',
-      ],
+      type: ['application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/zip','application/x-zip-compressed','video/*','audio/*'],
       copyToCacheDirectory: true,
     });
-
     if (result.canceled || !result.assets?.[0]) return;
     const asset = result.assets[0];
     setUploadingFile(true);
 
     const tempId = `temp_${Date.now()}`;
-    const newMsg: Message = {
+    setMessages(prev => [...prev, {
       _id: tempId,
       sender: { _id: currentUser?._id || '', name: currentUser?.name || '', avatar: currentUser?.avatar },
-      content: asset.name || 'File',
-      type: 'file',
-      createdAt: new Date().toISOString(),
-      readBy: [],
+      content: asset.name || 'File', type: 'file', createdAt: new Date().toISOString(), readBy: [],
       attachments: [{ url: '', type: 'document', name: asset.name || 'file' }],
-    };
-    setMessages(prev => [...prev, newMsg]);
+    }]);
     setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
 
     try {
       const token = await getToken();
       const formData = new FormData();
-      formData.append('file', {
-        uri: asset.uri,
-        type: asset.mimeType || 'application/octet-stream',
-        name: asset.name || `file_${Date.now()}`,
-      } as any);
-      if (type === 'group') {
-        formData.append('groupId', id as string);
-      } else {
-        formData.append('receiverId', id as string);
-      }
+      formData.append('file', { uri: asset.uri, type: asset.mimeType || 'application/octet-stream', name: asset.name || `file_${Date.now()}` } as any);
+      type === 'group' ? formData.append('groupId', id as string) : formData.append('receiverId', id as string);
 
-      const uploadRes = await fetch(`${BASE_URL}/api/chat/upload/document`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
+      const uploadRes = await fetch(`${BASE_URL}/api/chat/upload/document`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: formData });
       const uploadData = await uploadRes.json();
       const fileUrl = uploadData.file?.url || '';
 
-      setMessages(prev => prev.map(m =>
-        m._id === tempId ? { ...m, attachments: [{ url: fileUrl, type: 'document', name: asset.name || 'file' }] } : m
-      ));
+      setMessages(prev => prev.map(m => m._id === tempId ? { ...m, attachments: [{ url: fileUrl, type: 'document', name: asset.name || 'file' }] } : m));
 
       const socket = socketService.getSocket();
       if (socket?.connected) {
-        const messageData = {
-          content: asset.name || 'File',
-          type: 'file',
-          attachments: [{ url: fileUrl, type: 'document', name: asset.name || 'file' }],
-        };
-        if (type === 'group') {
-          socket.emit('send_group_message', { groupId: id, ...messageData });
-        } else {
-          socket.emit('send_private_message', { receiverId: id, ...messageData });
-        }
+        const messageData = { content: asset.name || 'File', type: 'file', attachments: [{ url: fileUrl, type: 'document', name: asset.name || 'file' }] };
+        type === 'group'
+          ? socket.emit('send_group_message', { groupId: id, ...messageData })
+          : socket.emit('send_private_message', { receiverId: id, ...messageData });
       }
     } catch (e) {
       console.error('Upload file error:', e);
       setMessages(prev => prev.filter(m => m._id !== tempId));
       Alert.alert('Lỗi', 'Không thể gửi file!');
-    } finally {
-      setUploadingFile(false);
-    }
+    } finally { setUploadingFile(false); }
   };
 
-  // ─── Message actions (delete, revoke, pin) ───────────────────────────────────
+  // ─── Message actions ─────────────────────────────────────────────────────────
+  // ✅ FIX: Cho phép long press cả tin nhắn của mình kể cả ảnh/file
   const handleLongPressMessage = (message: Message) => {
-    // Chỉ cho phép thao tác với tin nhắn của mình và chưa bị thu hồi
     if (message.sender._id !== currentUser?._id) return;
     if (message._id.startsWith('temp_')) return;
+    if (message.isRevoked) return; // Đã thu hồi rồi thì không show options
     setSelectedMessage(message);
     setShowMessageOptions(true);
   };
@@ -583,40 +449,26 @@ const ChatDetailScreen = () => {
     setShowMessageOptions(false);
     try {
       const token = await getToken();
-      const res = await fetch(`${BASE_URL}/api/chat/${selectedMessage._id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        setMessages(prev => prev.filter(m => m._id !== selectedMessage._id));
-      } else {
-        Alert.alert('Lỗi', 'Không thể xóa tin nhắn!');
-      }
-    } catch (e) {
-      console.error('Delete message error:', e);
-      Alert.alert('Lỗi', 'Không thể xóa tin nhắn!');
-    } finally {
-      setSelectedMessage(null);
-    }
+      const res = await fetch(`${BASE_URL}/api/chat/${selectedMessage._id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) setMessages(prev => prev.filter(m => m._id !== selectedMessage._id));
+      else Alert.alert('Lỗi', 'Không thể xóa tin nhắn!');
+    } catch (e) { Alert.alert('Lỗi', 'Không thể xóa tin nhắn!'); }
+    finally { setSelectedMessage(null); }
   };
 
+  // ✅ FIX: Thu hồi đúng — đổi type về 'text', xóa attachments
   const revokeMessage = async () => {
     if (!selectedMessage) return;
     setShowMessageOptions(false);
     try {
       const token = await getToken();
-      const res = await fetch(`${BASE_URL}/api/chat/${selectedMessage._id}/revoke`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch(`${BASE_URL}/api/chat/${selectedMessage._id}/revoke`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) {
-        // Cập nhật local
         setMessages(prev => prev.map(msg =>
           msg._id === selectedMessage._id
-            ? { ...msg, content: 'Tin nhắn đã được thu hồi', isRevoked: true, attachments: [] }
+            ? { ...msg, content: 'Tin nhắn đã được thu hồi', isRevoked: true, type: 'text', attachments: [] }
             : msg
         ));
-        // Gửi socket
         const socket = socketService.getSocket();
         if (socket) {
           socket.emit('revoke_message', {
@@ -625,16 +477,12 @@ const ChatDetailScreen = () => {
             groupId: type === 'group' ? id : undefined,
           });
         }
-      } else {
-        Alert.alert('Lỗi', 'Không thể thu hồi tin nhắn');
-      }
-    } catch (error) {
-      console.error('Revoke error:', error);
-    } finally {
-      setSelectedMessage(null);
-    }
+      } else Alert.alert('Lỗi', 'Không thể thu hồi tin nhắn');
+    } catch (error) { console.error('Revoke error:', error); }
+    finally { setSelectedMessage(null); }
   };
 
+  // ✅ Ghim — cập nhật banner + messages
   const pinMessage = async () => {
     if (!selectedMessage) return;
     setShowMessageOptions(false);
@@ -647,73 +495,47 @@ const ChatDetailScreen = () => {
       });
       const data = await res.json();
       if (res.ok) {
-        // Cập nhật local
-        setMessages(prev => prev.map(msg =>
-          msg._id === selectedMessage._id
-            ? { ...msg, pinned: data.pinned, pinnedAt: data.pinnedAt }
-            : msg
-        ));
-        // Gửi socket
+        setMessages(prev => {
+          const updated = prev.map(msg => msg._id === selectedMessage._id ? { ...msg, pinned: data.pinned, pinnedAt: data.pinnedAt } : msg);
+          if (data.pinned) {
+            setPinnedMessage({ ...selectedMessage, pinned: true, pinnedAt: data.pinnedAt });
+          } else {
+            const remaining = updated.filter(m => m.pinned).sort((a, b) => new Date(b.pinnedAt || 0).getTime() - new Date(a.pinnedAt || 0).getTime());
+            setPinnedMessage(remaining[0] || null);
+          }
+          return updated;
+        });
         const socket = socketService.getSocket();
         if (socket) {
           socket.emit('message_pinned', {
-            messageId: selectedMessage._id,
-            pinned: data.pinned,
+            messageId: selectedMessage._id, pinned: data.pinned,
             receiverId: type === 'private' ? id : undefined,
             groupId: type === 'group' ? id : undefined,
           });
         }
-      } else {
-        Alert.alert('Lỗi', data.error || 'Không thể ghim tin nhắn');
-      }
-    } catch (error) {
-      console.error('Pin error:', error);
-    } finally {
-      setSelectedMessage(null);
-    }
+      } else Alert.alert('Lỗi', data.error || 'Không thể ghim tin nhắn');
+    } catch (error) { console.error('Pin error:', error); }
+    finally { setSelectedMessage(null); }
   };
 
-  // ─── Call ───────────────────────────────────────────────────────────────────
+  // ─── Call ────────────────────────────────────────────────────────────────────
   const startCall = async () => {
     if (type === 'group') {
       const channelName = `group_${id}`;
       const socket = socketService.getSocket();
-      if (!socket) {
-        Alert.alert('Lỗi', 'Không thể kết nối socket. Vui lòng thử lại.');
-        return;
-      }
-      socket.emit('group_call_offer', {
-        groupId: id,
-        channelName,
-        callerName: currentUser?.name,
-        callerAvatar: currentUser?.avatar,
-      });
-      router.push({
-        pathname: '/call/[channelName]',
-        params: { channelName, targetId: id, isGroup: 'true' }
-      });
+      if (!socket) { Alert.alert('Lỗi', 'Không thể kết nối socket.'); return; }
+      socket.emit('group_call_offer', { groupId: id, channelName, callerName: currentUser?.name, callerAvatar: currentUser?.avatar });
+      router.push({ pathname: '/call/[channelName]', params: { channelName, targetId: id, isGroup: 'true' } });
     } else {
       const channelName = `private_${currentUser?._id}_${id}`;
       const socket = socketService.getSocket();
-      if (!socket) {
-        Alert.alert('Lỗi', 'Không thể kết nối socket. Vui lòng thử lại.');
-        return;
-      }
-      socket.emit('call_offer', {
-        to: id,
-        channelName,
-        callerName: currentUser?.name,
-        callerAvatar: currentUser?.avatar,
-        type: 'video'
-      });
-      router.push({
-        pathname: '/call/[channelName]',
-        params: { channelName, targetId: id, isGroup: 'false' }
-      });
+      if (!socket) { Alert.alert('Lỗi', 'Không thể kết nối socket.'); return; }
+      socket.emit('call_offer', { to: id, channelName, callerName: currentUser?.name, callerAvatar: currentUser?.avatar, type: 'video' });
+      router.push({ pathname: '/call/[channelName]', params: { channelName, targetId: id, isGroup: 'false' } });
     }
   };
 
-  // ─── Render helpers ─────────────────────────────────────────────────────────
+  // ─── Render helpers ──────────────────────────────────────────────────────────
   const insertEmoji = (emoji: string) => setInputText(prev => prev + emoji);
 
   const renderEmojiPicker = () => (
@@ -743,22 +565,17 @@ const ChatDetailScreen = () => {
   const renderAttachMenu = () => (
     <View style={[styles.attachMenu, { backgroundColor: colors.background, borderTopColor: colors.borderColor }]}>
       <TouchableOpacity style={styles.attachMenuItem} onPress={pickAndSendImage} disabled={uploadingImage}>
-        {uploadingImage
-          ? <ActivityIndicator size={28} color="#4CAF50" />
-          : <View style={[styles.attachMenuIcon, { backgroundColor: '#4CAF50' + '20' }]}>
-              <Ionicons name="image-outline" size={28} color="#4CAF50" />
-            </View>
-        }
+        {uploadingImage ? <ActivityIndicator size={28} color="#4CAF50" /> :
+          <View style={[styles.attachMenuIcon, { backgroundColor: '#4CAF50' + '20' }]}>
+            <Ionicons name="image-outline" size={28} color="#4CAF50" />
+          </View>}
         <Text style={[styles.attachMenuLabel, { color: colors.text }]}>Ảnh</Text>
       </TouchableOpacity>
-
       <TouchableOpacity style={styles.attachMenuItem} onPress={pickAndSendFile} disabled={uploadingFile}>
-        {uploadingFile
-          ? <ActivityIndicator size={28} color="#2196F3" />
-          : <View style={[styles.attachMenuIcon, { backgroundColor: '#2196F3' + '20' }]}>
-              <Ionicons name="document-outline" size={28} color="#2196F3" />
-            </View>
-        }
+        {uploadingFile ? <ActivityIndicator size={28} color="#2196F3" /> :
+          <View style={[styles.attachMenuIcon, { backgroundColor: '#2196F3' + '20' }]}>
+            <Ionicons name="document-outline" size={28} color="#2196F3" />
+          </View>}
         <Text style={[styles.attachMenuLabel, { color: colors.text }]}>File</Text>
       </TouchableOpacity>
     </View>
@@ -767,138 +584,131 @@ const ChatDetailScreen = () => {
   const formatTime = (dateString: string) =>
     new Date(dateString).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
+  // ✅ Banner tin nhắn ghim — giống Zalo/Messenger
+  const renderPinnedBanner = () => {
+    if (!pinnedMessage) return null;
+    const isRevoked = pinnedMessage.isRevoked;
+    const preview = isRevoked
+      ? 'Tin nhắn đã được thu hồi'
+      : pinnedMessage.type === 'image' ? '📷 Ảnh'
+      : pinnedMessage.type === 'file' ? '📎 ' + (pinnedMessage.attachments?.[0]?.name || 'File')
+      : pinnedMessage.content;
+
+    return (
+      <TouchableOpacity
+        style={[styles.pinnedBanner, { backgroundColor: colors.background, borderBottomColor: colors.borderColor }]}
+        onPress={() => {
+          // Scroll đến tin nhắn ghim
+          const idx = messages.findIndex(m => m._id === pinnedMessage._id);
+          if (idx !== -1) flatListRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 });
+        }}
+        activeOpacity={0.8}
+      >
+        <View style={[styles.pinnedAccent, { backgroundColor: colors.tint }]} />
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.pinnedLabel, { color: colors.tint }]}>📌 Tin nhắn đã ghim</Text>
+          <Text style={[styles.pinnedPreview, { color: colors.text }]} numberOfLines={1}>{preview}</Text>
+        </View>
+        <TouchableOpacity
+          onPress={() => {
+            // Bỏ ghim từ banner
+            setSelectedMessage(pinnedMessage);
+            pinMessage();
+          }}
+          hitSlop={8}
+        >
+          <Ionicons name="close" size={18} color={colors.textSecondary} />
+        </TouchableOpacity>
+      </TouchableOpacity>
+    );
+  };
+
+  // ✅ FIX renderMessage — wrap toàn bộ (kể cả ảnh) trong TouchableOpacity có onLongPress
   const renderMessage = ({ item, index }: { item: Message; index: number }) => {
     const isMyMessage = item.sender._id === currentUser?._id;
     const isEndOfSequence = index === messages.length - 1 || messages[index + 1]?.sender._id !== item.sender._id;
     const showAvatar = !isMyMessage && isEndOfSequence;
     const isReadByOther = item.readBy.some(uid => uid !== currentUser?._id);
     const isTemp = item._id.startsWith('temp_');
-    const imageAttachment = item.type === 'image' ? item.attachments?.[0] : null;
-    const fileAttachment = item.type === 'file' ? item.attachments?.[0] : null;
+    const imageAttachment = !item.isRevoked && item.type === 'image' ? item.attachments?.[0] : null;
+    const fileAttachment = !item.isRevoked && item.type === 'file' ? item.attachments?.[0] : null;
 
-    // Hiển thị tin nhắn đã thu hồi
-    if (item.isRevoked) {
-      return (
-        <View style={[styles.messageRow, isMyMessage ? styles.myMessageRow : styles.otherMessageRow]}>
-          {!isMyMessage && (
-            <View style={styles.avatarContainer}>
-              {showAvatar ? (
-                item.sender.avatar ? (
-                  <Image source={{ uri: item.sender.avatar }} style={styles.avatar} />
-                ) : (
-                  <View style={[styles.avatar, { backgroundColor: colors.tint + '20' }]}>
-                    <Text style={[styles.avatarText, { color: colors.tint }]}>
-                      {item.sender.name.charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                )
-              ) : (
-                <View style={styles.avatarPlaceholder} />
-              )}
-            </View>
-          )}
-          <View style={[
-            styles.messageBubble,
-            isMyMessage ? styles.myMessage : styles.otherMessage,
-            { backgroundColor: isMyMessage ? colors.tint + '80' : colors.backgroundElement },
-          ]}>
-            <Text style={[styles.messageText, { color: isMyMessage ? '#fff' : colors.textSecondary, fontStyle: 'italic' }]}>
-              {item.content}
-            </Text>
-            <View style={styles.messageFooter}>
-              <Text style={[styles.messageTime, { color: isMyMessage ? 'rgba(255,255,255,0.6)' : colors.textSecondary }]}>
-                {formatTime(item.createdAt)}
-              </Text>
-            </View>
-          </View>
+    const avatarEl = !isMyMessage ? (
+      <View style={styles.avatarContainer}>
+        {showAvatar ? (
+          item.sender.avatar
+            ? <Image source={{ uri: item.sender.avatar }} style={styles.avatar} />
+            : <View style={[styles.avatar, { backgroundColor: colors.tint + '20' }]}>
+                <Text style={[styles.avatarText, { color: colors.tint }]}>{item.sender.name.charAt(0).toUpperCase()}</Text>
+              </View>
+        ) : <View style={styles.avatarPlaceholder} />}
+      </View>
+    ) : null;
+
+    const bubbleContent = item.isRevoked ? (
+      // ✅ Thu hồi — luôn hiển thị text nghiêng, không render ảnh/file
+      <Text style={[styles.messageText, { color: isMyMessage ? 'rgba(255,255,255,0.7)' : colors.textSecondary, fontStyle: 'italic' }]}>
+        🚫 Tin nhắn đã được thu hồi
+      </Text>
+    ) : imageAttachment ? (
+      <Image source={{ uri: imageAttachment.url }} style={styles.messageImage} resizeMode="cover" />
+    ) : fileAttachment ? (
+      <TouchableOpacity
+        style={styles.fileBubble}
+        onPress={() => fileAttachment.url && Linking.openURL(fileAttachment.url)}
+        disabled={!fileAttachment.url}
+      >
+        <View style={[styles.fileIcon, { backgroundColor: isMyMessage ? 'rgba(255,255,255,0.2)' : colors.tint + '20' }]}>
+          <Ionicons name="document-outline" size={24} color={isMyMessage ? '#fff' : colors.tint} />
         </View>
-      );
-    }
+        <View style={styles.fileInfo}>
+          <Text style={[styles.fileName, { color: isMyMessage ? '#fff' : colors.text }]} numberOfLines={2}>{fileAttachment.name}</Text>
+          {!fileAttachment.url && isTemp && (
+            <Text style={{ color: isMyMessage ? 'rgba(255,255,255,0.6)' : colors.textSecondary, fontSize: 11 }}>Đang tải lên...</Text>
+          )}
+        </View>
+        {!fileAttachment.url && isTemp
+          ? <ActivityIndicator size={16} color={isMyMessage ? '#fff' : colors.tint} />
+          : <Ionicons name="download-outline" size={20} color={isMyMessage ? 'rgba(255,255,255,0.8)' : colors.tint} />}
+      </TouchableOpacity>
+    ) : (
+      <Text style={[styles.messageText, { color: isMyMessage ? '#fff' : colors.text }]}>{item.content}</Text>
+    );
 
     return (
+      // ✅ FIX: Toàn bộ message (kể cả ảnh) đều có onLongPress
       <TouchableOpacity
         activeOpacity={0.85}
         onLongPress={() => handleLongPressMessage(item)}
         delayLongPress={400}
       >
         <View style={[styles.messageRow, isMyMessage ? styles.myMessageRow : styles.otherMessageRow]}>
-          {!isMyMessage && (
-            <View style={styles.avatarContainer}>
-              {showAvatar ? (
-                item.sender.avatar
-                  ? <Image source={{ uri: item.sender.avatar }} style={styles.avatar} />
-                  : (
-                    <View style={[styles.avatar, { backgroundColor: colors.tint + '20' }]}>
-                      <Text style={[styles.avatarText, { color: colors.tint }]}>
-                        {item.sender.name.charAt(0).toUpperCase()}
-                      </Text>
-                    </View>
-                  )
-              ) : <View style={styles.avatarPlaceholder} />}
-            </View>
-          )}
-
+          {avatarEl}
           <View style={[
             styles.messageBubble,
             isMyMessage ? styles.myMessage : styles.otherMessage,
-            (imageAttachment || fileAttachment) ? styles.mediaBubble : null,
-            { backgroundColor: isMyMessage ? colors.tint : colors.backgroundElement },
+            (imageAttachment && !item.isRevoked) ? styles.mediaBubble : null,
+            { backgroundColor: item.isRevoked
+                ? (isMyMessage ? colors.tint + '60' : colors.backgroundElement)
+                : (isMyMessage ? colors.tint : colors.backgroundElement) },
           ]}>
-            {imageAttachment ? (
-              <TouchableOpacity
-                onPress={() => imageAttachment.url && setSelectedImage(imageAttachment.url)}
-                activeOpacity={0.9}
-              >
-                <Image source={{ uri: imageAttachment.url }} style={styles.messageImage} resizeMode="cover" />
-                {isTemp && uploadingImage && (
-                  <View style={styles.mediaOverlay}>
-                    <ActivityIndicator color="#fff" />
-                  </View>
-                )}
-              </TouchableOpacity>
-            ) : fileAttachment ? (
-              <TouchableOpacity
-                style={styles.fileBubble}
-                onPress={() => fileAttachment.url && Linking.openURL(fileAttachment.url)}
-                disabled={!fileAttachment.url}
-              >
-                <View style={[styles.fileIcon, { backgroundColor: isMyMessage ? 'rgba(255,255,255,0.2)' : colors.tint + '20' }]}>
-                  <Ionicons name="document-outline" size={24} color={isMyMessage ? '#fff' : colors.tint} />
-                </View>
-                <View style={styles.fileInfo}>
-                  <Text style={[styles.fileName, { color: isMyMessage ? '#fff' : colors.text }]} numberOfLines={2}>
-                    {fileAttachment.name}
-                  </Text>
-                  {!fileAttachment.url && isTemp && (
-                    <Text style={{ color: isMyMessage ? 'rgba(255,255,255,0.6)' : colors.textSecondary, fontSize: 11 }}>
-                      Đang tải lên...
-                    </Text>
-                  )}
-                </View>
-                {!fileAttachment.url && isTemp
-                  ? <ActivityIndicator size={16} color={isMyMessage ? '#fff' : colors.tint} />
-                  : <Ionicons name="download-outline" size={20} color={isMyMessage ? 'rgba(255,255,255,0.8)' : colors.tint} />
-                }
-              </TouchableOpacity>
-            ) : (
-              <Text style={[styles.messageText, { color: isMyMessage ? '#fff' : colors.text }]}>
-                {item.content}
-              </Text>
-            )}
+            {isTemp && uploadingImage && imageAttachment ? (
+              <View style={{ position: 'relative' }}>
+                {bubbleContent}
+                <View style={styles.mediaOverlay}><ActivityIndicator color="#fff" /></View>
+              </View>
+            ) : bubbleContent}
 
             <View style={styles.messageFooter}>
               <Text style={[styles.messageTime, { color: isMyMessage ? 'rgba(255,255,255,0.6)' : colors.textSecondary }]}>
                 {formatTime(item.createdAt)}
               </Text>
-              {isMyMessage && !isTemp && type !== 'group' && (
-                <Ionicons
-                  name={isReadByOther ? 'checkmark-done' : 'checkmark'}
-                  size={16}
-                  color={isReadByOther ? '#4FC3F7' : 'rgba(255,255,255,0.6)'}
-                />
+              {isMyMessage && !isTemp && !item.isRevoked && type !== 'group' && (
+                <Ionicons name={isReadByOther ? 'checkmark-done' : 'checkmark'} size={16}
+                  color={isReadByOther ? '#4FC3F7' : 'rgba(255,255,255,0.6)'} />
               )}
               {isTemp && <ActivityIndicator size={12} color="rgba(255,255,255,0.6)" />}
-              {item.pinned && (
+              {item.pinned && !item.isRevoked && (
                 <Ionicons name="pin" size={12} color={isMyMessage ? 'rgba(255,255,255,0.6)' : colors.textSecondary} />
               )}
             </View>
@@ -909,12 +719,7 @@ const ChatDetailScreen = () => {
   };
 
   const renderImageViewer = () => (
-    <Modal
-      visible={!!selectedImage}
-      transparent
-      animationType="fade"
-      onRequestClose={() => setSelectedImage(null)}
-    >
+    <Modal visible={!!selectedImage} transparent animationType="fade" onRequestClose={() => setSelectedImage(null)}>
       <View style={styles.imageViewerContainer}>
         <TouchableWithoutFeedback onPress={() => setSelectedImage(null)}>
           <View style={styles.imageViewerBg} />
@@ -922,18 +727,9 @@ const ChatDetailScreen = () => {
         <TouchableOpacity style={styles.imageViewerClose} onPress={() => setSelectedImage(null)}>
           <Ionicons name="close" size={28} color="#fff" />
         </TouchableOpacity>
+        {selectedImage && <Image source={{ uri: selectedImage }} style={styles.imageViewerImage} resizeMode="contain" />}
         {selectedImage && (
-          <Image
-            source={{ uri: selectedImage }}
-            style={styles.imageViewerImage}
-            resizeMode="contain"
-          />
-        )}
-        {selectedImage && (
-          <TouchableOpacity
-            style={styles.imageViewerDownload}
-            onPress={() => Linking.openURL(selectedImage!)}
-          >
+          <TouchableOpacity style={styles.imageViewerDownload} onPress={() => Linking.openURL(selectedImage!)}>
             <Ionicons name="download-outline" size={24} color="#fff" />
             <Text style={styles.imageViewerDownloadText}>Tải xuống</Text>
           </TouchableOpacity>
@@ -943,62 +739,50 @@ const ChatDetailScreen = () => {
   );
 
   const renderMessageOptions = () => (
-    <Modal
-      visible={showMessageOptions}
-      transparent
-      animationType="fade"
-      onRequestClose={() => setShowMessageOptions(false)}
-    >
+    <Modal visible={showMessageOptions} transparent animationType="slide" onRequestClose={() => setShowMessageOptions(false)}>
       <TouchableWithoutFeedback onPress={() => setShowMessageOptions(false)}>
         <View style={styles.optionsOverlay}>
           <TouchableWithoutFeedback>
             <View style={[styles.optionsContainer, { backgroundColor: colors.background }]}>
               <Text style={[styles.optionsTitle, { color: colors.textSecondary }]}>Tùy chọn tin nhắn</Text>
 
-              <TouchableOpacity
-                style={styles.optionItem}
-                onPress={() => {
-                  setShowMessageOptions(false);
-                  Alert.alert('Xóa tin nhắn', 'Bạn có chắc muốn xóa tin nhắn này?', [
-                    { text: 'Hủy', style: 'cancel' },
-                    { text: 'Xóa', style: 'destructive', onPress: deleteMessage },
-                  ]);
-                }}
-              >
+              {/* Thu hồi */}
+              {!selectedMessage?.isRevoked && (
+                <TouchableOpacity style={styles.optionItem} onPress={revokeMessage}>
+                  <View style={[styles.optionIcon, { backgroundColor: '#FF9800' + '20' }]}>
+                    <Ionicons name="arrow-undo-outline" size={20} color="#FF9800" />
+                  </View>
+                  <Text style={[styles.optionText, { color: '#FF9800' }]}>Thu hồi tin nhắn</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Ghim */}
+              {!selectedMessage?.isRevoked && (
+                <TouchableOpacity style={styles.optionItem} onPress={pinMessage}>
+                  <View style={[styles.optionIcon, { backgroundColor: '#2196F3' + '20' }]}>
+                    <Ionicons name="pin" size={20} color="#2196F3" />
+                  </View>
+                  <Text style={[styles.optionText, { color: '#2196F3' }]}>
+                    {selectedMessage?.pinned ? 'Bỏ ghim tin nhắn' : 'Ghim tin nhắn'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Xóa */}
+              <TouchableOpacity style={styles.optionItem} onPress={() => {
+                setShowMessageOptions(false);
+                Alert.alert('Xóa tin nhắn', 'Bạn có chắc muốn xóa tin nhắn này?', [
+                  { text: 'Hủy', style: 'cancel' },
+                  { text: 'Xóa', style: 'destructive', onPress: deleteMessage },
+                ]);
+              }}>
                 <View style={[styles.optionIcon, { backgroundColor: '#F44336' + '20' }]}>
                   <Ionicons name="trash-outline" size={20} color="#F44336" />
                 </View>
                 <Text style={[styles.optionText, { color: '#F44336' }]}>Xóa tin nhắn</Text>
               </TouchableOpacity>
 
-              {/* Thu hồi */}
-              <TouchableOpacity
-                style={styles.optionItem}
-                onPress={revokeMessage}
-              >
-                <View style={[styles.optionIcon, { backgroundColor: '#FF9800' + '20' }]}>
-                  <Ionicons name="arrow-undo-outline" size={20} color="#FF9800" />
-                </View>
-                <Text style={[styles.optionText, { color: '#FF9800' }]}>Thu hồi tin nhắn</Text>
-              </TouchableOpacity>
-
-              {/* Ghim */}
-              <TouchableOpacity
-                style={styles.optionItem}
-                onPress={pinMessage}
-              >
-                <View style={[styles.optionIcon, { backgroundColor: '#2196F3' + '20' }]}>
-                  <Ionicons name="pin" size={20} color="#2196F3" />
-                </View>
-                <Text style={[styles.optionText, { color: '#2196F3' }]}>
-                  {selectedMessage?.pinned ? 'Bỏ ghim' : 'Ghim tin nhắn'}
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.optionItem}
-                onPress={() => setShowMessageOptions(false)}
-              >
+              <TouchableOpacity style={styles.optionItem} onPress={() => setShowMessageOptions(false)}>
                 <View style={[styles.optionIcon, { backgroundColor: colors.backgroundElement }]}>
                   <Ionicons name="close-outline" size={20} color={colors.text} />
                 </View>
@@ -1032,59 +816,43 @@ const ChatDetailScreen = () => {
         {renderImageViewer()}
         {renderMessageOptions()}
 
+        {/* Header */}
         <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.borderColor }]}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-
           <TouchableOpacity
             style={styles.userInfo}
-            onPress={() => {
-              if (type === 'group') {
-                router.push(`/group/${id}` as any);
-              } else {
-                router.push(`/chat/info/${id}` as any);
-              }
-            }}
+            onPress={() => { type === 'group' ? router.push(`/group/${id}` as any) : router.push(`/chat/info/${id}` as any); }}
             activeOpacity={0.7}
           >
             <View style={styles.userAvatar}>
               {type === 'group' ? (
-                groupInfo?.avatar ? (
-                  <Image source={{ uri: groupInfo.avatar }} style={styles.headerAvatar} />
-                ) : (
-                  <View style={[styles.headerAvatar, { backgroundColor: colors.tint + '20' }]}>
-                    <Ionicons name="people" size={24} color={colors.tint} />
-                  </View>
-                )
+                groupInfo?.avatar
+                  ? <Image source={{ uri: groupInfo.avatar }} style={styles.headerAvatar} />
+                  : <View style={[styles.headerAvatar, { backgroundColor: colors.tint + '20' }]}><Ionicons name="people" size={24} color={colors.tint} /></View>
               ) : (
-                userInfo?.avatar ? (
-                  <Image source={{ uri: userInfo.avatar }} style={styles.headerAvatar} />
-                ) : (
-                  <View style={[styles.headerAvatar, { backgroundColor: colors.tint + '20' }]}>
-                    <Text style={[styles.headerAvatarText, { color: colors.tint }]}>
-                      {userInfo?.name?.charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                )
+                userInfo?.avatar
+                  ? <Image source={{ uri: userInfo.avatar }} style={styles.headerAvatar} />
+                  : <View style={[styles.headerAvatar, { backgroundColor: colors.tint + '20' }]}>
+                      <Text style={[styles.headerAvatarText, { color: colors.tint }]}>{userInfo?.name?.charAt(0).toUpperCase()}</Text>
+                    </View>
               )}
             </View>
             <View>
-              <Text style={[styles.userName, { color: colors.text }]} numberOfLines={1}>
-                {headerTitle || (type === 'group' ? 'Nhóm' : 'Người dùng')}
-              </Text>
-              <Text style={[styles.userStatus, { color: otherUserTyping && type !== 'group' ? colors.tint : colors.textSecondary }]}>
-                {headerSubtitle}
-              </Text>
+              <Text style={[styles.userName, { color: colors.text }]} numberOfLines={1}>{headerTitle || (type === 'group' ? 'Nhóm' : 'Người dùng')}</Text>
+              <Text style={[styles.userStatus, { color: otherUserTyping && type !== 'group' ? colors.tint : colors.textSecondary }]}>{headerSubtitle}</Text>
             </View>
           </TouchableOpacity>
-
           <View style={styles.headerActions}>
             <TouchableOpacity style={styles.headerButton} onPress={startCall}>
               <Ionicons name="call-outline" size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* ✅ Banner ghim — hiện ngay dưới header giống Zalo/Messenger */}
+        {renderPinnedBanner()}
 
         <FlatList
           ref={flatListRef}
@@ -1099,22 +867,11 @@ const ChatDetailScreen = () => {
           onScrollBeginDrag={() => { setShowEmojiPicker(false); setShowAttachMenu(false); }}
         />
 
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-        >
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}>
           <View style={[styles.inputContainer, { backgroundColor: colors.background, borderTopColor: colors.borderColor }]}>
-            <TouchableOpacity
-              style={styles.attachButton}
-              onPress={() => { setShowAttachMenu(prev => !prev); setShowEmojiPicker(false); }}
-            >
-              <Ionicons
-                name={showAttachMenu ? 'close' : 'attach'}
-                size={24}
-                color={showAttachMenu ? colors.tint : colors.textSecondary}
-              />
+            <TouchableOpacity style={styles.attachButton} onPress={() => { setShowAttachMenu(prev => !prev); setShowEmojiPicker(false); }}>
+              <Ionicons name={showAttachMenu ? 'close' : 'attach'} size={24} color={showAttachMenu ? colors.tint : colors.textSecondary} />
             </TouchableOpacity>
-
             <TextInput
               style={[styles.input, { backgroundColor: colors.backgroundElement, color: colors.text }]}
               placeholder="Nhập tin nhắn..."
@@ -1124,21 +881,16 @@ const ChatDetailScreen = () => {
               multiline
               onFocus={() => { setShowEmojiPicker(false); setShowAttachMenu(false); }}
             />
-
             {inputText.trim() ? (
               <TouchableOpacity style={[styles.sendButton, { backgroundColor: colors.tint }]} onPress={sendMessage} disabled={sending}>
                 <Ionicons name="send" size={20} color="#fff" />
               </TouchableOpacity>
             ) : (
-              <TouchableOpacity
-                style={{ padding: 8 }}
-                onPress={() => { setShowEmojiPicker(prev => !prev); setShowAttachMenu(false); }}
-              >
+              <TouchableOpacity style={{ padding: 8 }} onPress={() => { setShowEmojiPicker(prev => !prev); setShowAttachMenu(false); }}>
                 <Text style={{ fontSize: 24 }}>{showEmojiPicker ? '⌨️' : '😊'}</Text>
               </TouchableOpacity>
             )}
           </View>
-
           {showAttachMenu && renderAttachMenu()}
           {showEmojiPicker && renderEmojiPicker()}
         </KeyboardAvoidingView>
@@ -1163,6 +915,17 @@ const styles = StyleSheet.create({
   userStatus: { fontSize: 12 },
   headerActions: { flexDirection: 'row' },
   headerButton: { padding: 8 },
+
+  // ✅ Banner ghim
+  pinnedBanner: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 12, paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth, gap: 10,
+  },
+  pinnedAccent: { width: 3, height: 36, borderRadius: 2 },
+  pinnedLabel: { fontSize: 11, fontWeight: '600', marginBottom: 2 },
+  pinnedPreview: { fontSize: 13 },
+
   messagesList: { paddingHorizontal: 12, paddingVertical: 16 },
   messageRow: { flexDirection: 'row', marginBottom: 8 },
   myMessageRow: { justifyContent: 'flex-end' },
@@ -1178,8 +941,7 @@ const styles = StyleSheet.create({
   messageImage: { width: 200, height: 200, borderRadius: 14 },
   mediaOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 14,
-    justifyContent: 'center', alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 14, justifyContent: 'center', alignItems: 'center',
   },
   fileBubble: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 4, minWidth: 180 },
   fileIcon: { width: 44, height: 44, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
@@ -1202,25 +964,12 @@ const styles = StyleSheet.create({
   emojiItem: { flex: 1, aspectRatio: 1, justifyContent: 'center', alignItems: 'center' },
   imageViewerContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
   imageViewerBg: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
-  imageViewerClose: {
-    position: 'absolute', top: 50, right: 20, zIndex: 10,
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center', alignItems: 'center',
-  },
+  imageViewerClose: { position: 'absolute', top: 50, right: 20, zIndex: 10, width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center' },
   imageViewerImage: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT * 0.75 },
-  imageViewerDownload: {
-    position: 'absolute', bottom: 50,
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20,
-  },
+  imageViewerDownload: { position: 'absolute', bottom: 50, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20 },
   imageViewerDownloadText: { color: '#fff', fontSize: 15, fontWeight: '500' },
   optionsOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  optionsContainer: {
-    borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    paddingTop: 12, paddingBottom: 34, paddingHorizontal: 16,
-  },
+  optionsContainer: { borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 12, paddingBottom: 34, paddingHorizontal: 16 },
   optionsTitle: { fontSize: 13, textAlign: 'center', marginBottom: 16 },
   optionItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14 },
   optionIcon: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
