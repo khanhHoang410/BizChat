@@ -1,7 +1,7 @@
 import { API_BASE } from '@/constants/api';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Alert,
@@ -41,6 +41,7 @@ export default function CallScreen() {
   const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(true);
   const [isFrontCamera, setIsFrontCamera] = useState(true);
   const [callDuration, setCallDuration] = useState(0);
+  const [videoOffUids, setVideoOffUids] = useState<Set<number>>(new Set()); // track ai đang tắt cam
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isGroupCall = isGroup === 'true';
@@ -116,7 +117,28 @@ export default function CallScreen() {
         },
         onUserOffline: (_connection: any, remoteUid: number) => {
           console.log('👋 UserOffline', remoteUid);
-          setRemoteUids(prev => prev.filter(u => u !== remoteUid));
+          setRemoteUids(prev => {
+            const updated = prev.filter(u => u !== remoteUid);
+            // 1-1: người kia offline → kết thúc cuộc gọi
+            if (!isGroupCall && updated.length === 0) {
+              setTimeout(() => {
+                cleanup();
+                router.back();
+              }, 500);
+            }
+            return updated;
+          });
+          setVideoOffUids(prev => { const s = new Set(prev); s.delete(remoteUid); return s; });
+        },
+        // Track người tắt/bật camera
+        onRemoteVideoStateChanged: (_connection: any, remoteUid: number, state: number) => {
+          // state 0 = stopped (tắt cam), state 2 = decoding (bật cam)
+          setVideoOffUids(prev => {
+            const s = new Set(prev);
+            if (state === 0) s.add(remoteUid);
+            else s.delete(remoteUid);
+            return s;
+          });
         },
         onError: (err: number, msg: string) => {
           console.error('Agora error', err, msg);
@@ -157,11 +179,25 @@ export default function CallScreen() {
   };
 
   const endCall = () => {
+    const duration = callDuration; // lưu lại trước khi cleanup reset
     cleanup();
     const socket = socketService.getSocket();
     if (socket) {
       if (!isGroupCall && targetId) {
-        socket.emit('call_end', { to: targetId, channelName });
+        socket.emit('call_end', {
+          to: targetId,
+          channelName,
+          duration,
+          isGroup: false,
+        });
+      } else if (isGroupCall && targetId) {
+        socket.emit('call_end', {
+          to: null,
+          channelName,
+          duration,
+          isGroup: true,
+          groupId: targetId,
+        });
       }
     }
     router.back();
@@ -193,10 +229,17 @@ export default function CallScreen() {
         <View style={styles.gridHalf}>
           {allUids.map((uid, i) => (
             <View key={uid} style={styles.halfCell}>
-              <RtcSurfaceView
-                canvas={{ uid, renderMode: RenderModeType.RenderModeFit }}
-                style={StyleSheet.absoluteFill}
-              />
+              {videoOffUids.has(uid) || (uid === 0 && isVideoOff) ? (
+                <View style={styles.videoOffPlaceholder}>
+                  <Ionicons name="person" size={40} color="#555" />
+                  <Text style={styles.videoOffText}>{uid === 0 ? 'Bạn' : `Người ${i}`}</Text>
+                </View>
+              ) : (
+                <RtcSurfaceView
+                  canvas={{ uid, renderMode: RenderModeType.RenderModeFit }}
+                  style={StyleSheet.absoluteFill}
+                />
+              )}
               <View style={styles.videoLabel}>
                 <Text style={styles.videoLabelText}>{uid === 0 ? 'Bạn' : `Người ${i}`}</Text>
               </View>
@@ -209,23 +252,28 @@ export default function CallScreen() {
     // 3-4 người → chia 4 ô (2x2)
     if (count <= 4) {
       const cells = [...allUids];
-      while (cells.length < 4) cells.push(-1); // placeholder
+      while (cells.length < 4) cells.push(-1);
       return (
         <View style={styles.grid2x2}>
           {cells.map((uid, i) => (
             <View key={`${uid}_${i}`} style={styles.quarterCell}>
               {uid >= 0 ? (
                 <>
-                  <RtcSurfaceView
-                    canvas={{ uid, renderMode: RenderModeType.RenderModeFit }}
-                    style={StyleSheet.absoluteFill}
-                  />
+                  {videoOffUids.has(uid) || (uid === 0 && isVideoOff) ? (
+                    <View style={styles.videoOffPlaceholder}>
+                      <Ionicons name="person" size={32} color="#555" />
+                    </View>
+                  ) : (
+                    <RtcSurfaceView
+                      canvas={{ uid, renderMode: RenderModeType.RenderModeFit }}
+                      style={StyleSheet.absoluteFill}
+                    />
+                  )}
                   <View style={styles.videoLabel}>
                     <Text style={styles.videoLabelText}>{uid === 0 ? 'Bạn' : `Người ${i + 1}`}</Text>
                   </View>
                 </>
               ) : (
-                // Ô trống
                 <View style={styles.emptyCell}>
                   <Ionicons name="person" size={32} color="#555" />
                 </View>
@@ -260,10 +308,20 @@ export default function CallScreen() {
       {/* Remote full screen */}
       <View style={styles.remoteContainer}>
         {remoteUids.length > 0 ? (
-          <RtcSurfaceView
-            canvas={{ uid: remoteUids[0], renderMode: RenderModeType.RenderModeFit }}
-            style={styles.remoteVideo}
-          />
+          videoOffUids.has(remoteUids[0]) ? (
+            // Remote tắt camera → hiện placeholder
+            <View style={styles.videoOffPlaceholder}>
+              <View style={styles.videoOffAvatar}>
+                <Ionicons name="person" size={64} color="#555" />
+              </View>
+              <Text style={styles.videoOffText}>Đã tắt camera</Text>
+            </View>
+          ) : (
+            <RtcSurfaceView
+              canvas={{ uid: remoteUids[0], renderMode: RenderModeType.RenderModeFit }}
+              style={styles.remoteVideo}
+            />
+          )
         ) : (
           <View style={styles.waitingContainer}>
             <Ionicons name="videocam" size={48} color="#555" />
@@ -280,6 +338,7 @@ export default function CallScreen() {
         {isVideoOff ? (
           <View style={styles.videoOffContainer}>
             <Ionicons name="videocam-off" size={24} color="#fff" />
+            <Text style={{ color: '#aaa', fontSize: 10, marginTop: 4 }}>Cam tắt</Text>
           </View>
         ) : (
           <RtcSurfaceView
@@ -292,6 +351,8 @@ export default function CallScreen() {
   );
 
   return (
+    <>
+        <Stack.Screen options={{ headerShown: false }} />
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
@@ -336,6 +397,7 @@ export default function CallScreen() {
         </TouchableOpacity>
       </View>
     </View>
+    </>
   );
 }
 
@@ -385,6 +447,27 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  // Placeholder khi tắt camera
+  videoOffPlaceholder: {
+    flex: 1,
+    backgroundColor: '#1a1a1a',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    ...StyleSheet.absoluteFillObject,
+  },
+  videoOffText: {
+    color: '#666',
+    fontSize: 12,
+  },
+  videoOffAvatar: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#2a2a2a',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
 
   // ── Group layouts ──
   gridFull: {
@@ -405,7 +488,6 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#333',
   },
-
   // 3-4 người — 2x2
   grid2x2: {
     flex: 1,

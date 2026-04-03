@@ -33,7 +33,7 @@ type Message = {
   _id: string;
   sender: { _id: string; name: string; avatar?: string };
   content: string;
-  type: 'text' | 'image' | 'file';
+  type: 'text' | 'image' | 'file' | 'system';
   createdAt: string;
   readBy: string[];
   attachments?: { url: string; type: string; name: string }[];
@@ -436,6 +436,7 @@ const ChatDetailScreen = () => {
   const handleLongPressMessage = (message: Message) => {
     if (message._id.startsWith('temp_')) return;
     if (message.isRevoked) return;
+    if (message.type === 'system') return; // ← không cho long press system message
     setSelectedMessage(message);
     setShowMessageOptions(true);
   };
@@ -663,6 +664,22 @@ const ChatDetailScreen = () => {
 
   // ✅ FIX renderMessage — wrap toàn bộ (kể cả ảnh) trong TouchableOpacity có onLongPress
   const renderMessage = ({ item, index }: { item: Message; index: number }) => {
+
+    // ── System message (cuộc gọi) — hiện giữa màn hình giống Zalo ──────────────
+    if (item.type === 'system') {
+      return (
+        <View style={styles.systemMessageRow}>
+          <View style={[styles.systemMessageBubble, { backgroundColor: colors.backgroundElement }]}>
+            <Text style={[styles.systemMessageText, { color: colors.textSecondary }]}>
+              {item.content}
+            </Text>
+            <Text style={[styles.systemMessageTime, { color: colors.textSecondary }]}>
+              {formatTime(item.createdAt)}
+            </Text>
+          </View>
+        </View>
+      );
+    }
     const isMyMessage = item.sender._id === currentUser?._id;
     const isEndOfSequence = index === messages.length - 1 || messages[index + 1]?.sender._id !== item.sender._id;
     const showAvatar = !isMyMessage && isEndOfSequence;
@@ -986,6 +1003,15 @@ const styles = StyleSheet.create({
   pinnedPreview: { fontSize: 13 },
 
   messagesList: { paddingHorizontal: 12, paddingVertical: 16 },
+  // ── System message (cuộc gọi) ──
+  systemMessageRow: { alignItems: 'center', marginVertical: 8 },
+  systemMessageBubble: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 14, paddingVertical: 6,
+    borderRadius: 16,
+  },
+  systemMessageText: { fontSize: 13 },
+  systemMessageTime: { fontSize: 11, opacity: 0.7 },
   messageRow: { flexDirection: 'row', marginBottom: 8 },
   myMessageRow: { justifyContent: 'flex-end' },
   otherMessageRow: { justifyContent: 'flex-start' },
