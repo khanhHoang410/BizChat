@@ -9,8 +9,10 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   FlatList,
   Image,
+  Linking,
   Modal,
   Platform,
   StatusBar,
@@ -24,9 +26,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
 const BASE_URL = API_BASE;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+const IMG_SIZE = (SCREEN_WIDTH - 8) / 3; // ← tính kích thước mỗi ô
 
 type Member = {
   user: {
@@ -112,10 +118,52 @@ const GroupDetailScreen = () => {
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
   const [showMemberOptions, setShowMemberOptions] = useState(false);
   const [editAvatar, setEditAvatar] = useState<string | null>(null);
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [showMediaModal, setShowMediaModal] = useState(false);
+  const [mediaFiles, setMediaFiles] = useState<any[]>([]);
+  const [loadingMedia, setLoadingMedia] = useState(false);
+  const [mediaTab, setMediaTab] = useState<'image' | 'document'>('image');
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
+
+  const fetchMedia = async (type: 'image' | 'document') => {
+  setLoadingMedia(true);
+  try {
+    const token = await getToken();
+    const res = await fetch(`${BASE_URL}/api/chat/files/${id}?type=${type}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json();
+    setMediaFiles(data.files || []);
+  } catch {
+    setMediaFiles([]);
+  } finally {
+    setLoadingMedia(false);
+  }
+};
 
   const getToken = () => AsyncStorage.getItem('userToken');
 
+  useEffect(() => {
+  if (!showAddModal) return;
+  const fetchAllUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/api/users?limit=50`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      const memberIds = group?.members.filter(m => m.user?._id).map(m => m.user._id) || [];
+      setAllUsers((data.users || []).filter((u: any) => !memberIds.includes(u._id)));
+    } catch {
+      setAllUsers([]);
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+  fetchAllUsers();
+}, [showAddModal]);
   // ─── Fetch ──────────────────────────────────────────────────────────────────
 
   const fetchCurrentUser = async () => {
@@ -255,7 +303,7 @@ const GroupDetailScreen = () => {
       });
       const data = await res.json();
       if (res.ok) {
-        setGroup(data.group);
+        await fetchGroup(); // fetch lại để đảm bảo members populate đầy đủ
         setUserResults(prev => prev.filter(u => u._id !== userId));
         Alert.alert('✅', `${userName} đã được thêm vào nhóm`);
       } else {
@@ -284,7 +332,11 @@ const GroupDetailScreen = () => {
               headers: { Authorization: `Bearer ${token}` },
             });
             const data = await res.json();
-            if (res.ok) { setGroup(data.group); setShowMemberOptions(false); }
+            if (res.ok) {
+              setShowMemberOptions(false);
+              setSelectedMember(null);
+              await fetchGroup(); // fetch lại để đảm bảo members populate đầy đủ
+            }
             else Alert.alert('Lỗi', data.error);
           },
         },
@@ -303,7 +355,7 @@ const GroupDetailScreen = () => {
     });
     const data = await res.json();
     if (res.ok) {
-      setGroup(data.group);
+      await fetchGroup();
       setShowMemberOptions(false);
       Alert.alert('✅', `${member.user.name} → ${ROLE_LABEL[newRole]}`);
     } else Alert.alert('Lỗi', data.error);
@@ -317,7 +369,7 @@ const GroupDetailScreen = () => {
     });
     const data = await res.json();
     if (res.ok) {
-      setGroup(data.group);
+      await fetchGroup();
       setShowMemberOptions(false);
       Alert.alert('✅', `${member.user.name} → Thành viên`);
     } else Alert.alert('Lỗi', data.error);
@@ -375,7 +427,7 @@ const GroupDetailScreen = () => {
       { kind: 'hero' },
       { kind: 'actions' },
       { kind: 'section_members' },
-      ...group.members.map(m => ({ kind: 'member' as const, data: m })),
+      ...group.members.filter(m => m.user?._id).map(m => ({ kind: 'member' as const, data: m })),
       { kind: 'section_settings' },
       { kind: 'setting_notifications' },
       { kind: 'setting_leave' },
@@ -490,6 +542,16 @@ const GroupDetailScreen = () => {
               </View>
               <Text style={[styles.actionLabel, { color: colors.text }]}>Rời nhóm</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.actionItem}
+              onPress={() => { setShowMediaModal(true); fetchMedia('image'); }}
+            >
+              <View style={[styles.actionIcon, { backgroundColor: colors.tint + '15' }]}>
+                <Ionicons name="image-outline" size={22} color={colors.tint} />
+              </View>
+              <Text style={[styles.actionLabel, { color: colors.text }]}>Ảnh & File</Text>
+            </TouchableOpacity>
           </View>
         );
 
@@ -524,12 +586,12 @@ const GroupDetailScreen = () => {
           >
             {/* Avatar */}
             <View style={styles.memberAvatarWrap}>
-              {mem.user.avatar ? (
+              {mem.user?.avatar ? (
                 <Image source={{ uri: mem.user.avatar }} style={styles.memberAvatar} />
               ) : (
                 <View style={[styles.memberAvatar, { backgroundColor: colors.tint + '20' }]}>
                   <Text style={[styles.memberAvatarLetter, { color: colors.tint }]}>
-                    {mem.user.name.charAt(0).toUpperCase()}
+                    {mem.user?.name?.charAt(0).toUpperCase() ?? '?'}
                   </Text>
                 </View>
               )}
@@ -548,10 +610,10 @@ const GroupDetailScreen = () => {
             {/* Info */}
             <View style={styles.memberMeta}>
               <Text style={[styles.memberName, { color: colors.text }]} numberOfLines={1}>
-                {mem.user.name}{isSelf ? ' (Bạn)' : ''}
+                {mem.user?.name ?? 'Unknown'}{isSelf ? ' (Bạn)' : ''}
               </Text>
               <Text style={[styles.memberSub, { color: colors.textSecondary }]} numberOfLines={1}>
-                {mem.user.email}
+                {mem.user?.email ?? ''}
               </Text>
             </View>
 
@@ -775,7 +837,7 @@ const renderEditModal = () => (
           <ActivityIndicator style={{ marginTop: 32 }} color={colors.tint} />
         ) : (
           <FlatList
-            data={userResults}
+            data={searchUsers.trim() ? userResults : allUsers}
             keyExtractor={u => u._id}
             keyboardShouldPersistTaps="handled"
             renderItem={({ item }) => (
@@ -841,17 +903,17 @@ const renderEditModal = () => (
 
                 {/* Member identity */}
                 <View style={styles.optMemberRow}>
-                  {mem.user.avatar ? (
+                  {mem.user?.avatar ? (
                     <Image source={{ uri: mem.user.avatar }} style={styles.optAvatar} />
                   ) : (
                     <View style={[styles.optAvatar, { backgroundColor: colors.tint + '20' }]}>
                       <Text style={{ color: colors.tint, fontSize: 20, fontWeight: '700' }}>
-                        {mem.user.name.charAt(0).toUpperCase()}
+                        {mem.user?.name?.charAt(0).toUpperCase() ?? '?'}
                       </Text>
                     </View>
                   )}
                   <View>
-                    <Text style={[styles.optName, { color: colors.text }]}>{mem.user.name}</Text>
+                    <Text style={[styles.optName, { color: colors.text }]}>{mem.user?.name ?? 'Unknown'}</Text>
                     <View style={[styles.rolePill, { backgroundColor: ROLE_COLOR[mem.role] + '18', alignSelf: 'flex-start', marginTop: 4 }]}>
                       <Text style={[styles.rolePillText, { color: ROLE_COLOR[mem.role] }]}>
                         {ROLE_LABEL[mem.role]}
@@ -943,6 +1005,107 @@ const renderEditModal = () => (
         {renderEditModal()}
         {renderAddModal()}
         {renderMemberOptions()}
+
+        {/* Image viewer */}
+        <Modal visible={!!selectedImage} transparent animationType="fade" onRequestClose={() => setSelectedImage(null)}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}>
+            <TouchableOpacity
+              style={{ position: 'absolute', top: 50, right: 20, zIndex: 10, width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center' }}
+              onPress={() => setSelectedImage(null)}
+            >
+              <Ionicons name="close" size={28} color="#fff" />
+            </TouchableOpacity>
+            {selectedImage && (
+              <Image source={{ uri: selectedImage }} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
+            )}
+            {selectedImage && (
+              <TouchableOpacity
+                style={{ position: 'absolute', bottom: 50, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20 }}
+                onPress={() => Linking.openURL(selectedImage!)}
+              >
+                <Ionicons name="download-outline" size={24} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 15, fontWeight: '500' }}>Tải xuống</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </Modal>
+
+        {/* Media modal */}
+        <Modal visible={showMediaModal} transparent animationType="slide" onRequestClose={() => setShowMediaModal(false)}>
+          <View style={{ flex: 1, marginTop: 60, borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: colors.background }}>
+            {/* Header */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderColor }}>
+              <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>Ảnh & File</Text>
+              <TouchableOpacity onPress={() => setShowMediaModal(false)}>
+                <Ionicons name="close" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Tabs */}
+            <View style={{ flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderColor }}>
+              {(['image', 'document'] as const).map(tab => (
+                <TouchableOpacity
+                  key={tab}
+                  style={{ flex: 1, paddingVertical: 12, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: mediaTab === tab ? colors.tint : 'transparent' }}
+                  onPress={() => { setMediaTab(tab); fetchMedia(tab); }}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: mediaTab === tab ? colors.tint : colors.textSecondary }}>
+                    {tab === 'image' ? '🖼 Ảnh' : '📎 File'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Content */}
+            {loadingMedia ? (
+              <ActivityIndicator style={{ marginTop: 40 }} color={colors.tint} />
+            ) : mediaFiles.length === 0 ? (
+              <View style={{ alignItems: 'center', marginTop: 60, gap: 12 }}>
+                <Ionicons name={mediaTab === 'image' ? 'image-outline' : 'document-outline'} size={48} color={colors.textSecondary} />
+                <Text style={{ color: colors.textSecondary, fontSize: 15 }}>
+                  {mediaTab === 'image' ? 'Chưa có ảnh nào' : 'Chưa có file nào'}
+                </Text>
+              </View>
+            ) : mediaTab === 'image' ? (
+              <FlatList
+                data={mediaFiles}
+                keyExtractor={f => f._id}
+                numColumns={3}
+                contentContainerStyle={{ padding: 2 }}
+                renderItem={({ item }) => (
+                 <TouchableOpacity
+                    style={{ width: IMG_SIZE, height: IMG_SIZE, margin: 2 }} // ← kích thước cố định
+                    onPress={() => setSelectedImage(item.url)}
+                  >
+                    <Image source={{ uri: item.url }} style={{ width: IMG_SIZE, height: IMG_SIZE, borderRadius: 4 }} resizeMode="cover" />
+                  </TouchableOpacity>
+                )}
+              />
+            ) : (
+              <FlatList
+                data={mediaFiles}
+                keyExtractor={f => f._id}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderColor, gap: 12 }}
+                    onPress={() => Linking.openURL(item.url)}
+                  >
+                    <View style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: colors.tint + '20', justifyContent: 'center', alignItems: 'center' }}>
+                      <Ionicons name="document-outline" size={24} color={colors.tint} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 14, fontWeight: '500', color: colors.text }} numberOfLines={1}>{item.name}</Text>
+                      <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                        {new Date(item.createdAt).toLocaleDateString('vi-VN')}
+                      </Text>
+                    </View>
+                    <Ionicons name="download-outline" size={20} color={colors.tint} />
+                  </TouchableOpacity>
+                )}
+              />
+            )}
+          </View>
+        </Modal>
 
         {/* Header */}
         <View style={[styles.topBar, { borderBottomColor: colors.borderColor }]}>

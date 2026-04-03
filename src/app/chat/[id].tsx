@@ -252,20 +252,15 @@ const ChatDetailScreen = () => {
     };
 
     // ✅ Ghim — cập nhật pinnedMessage banner
-    const handleMessagePinned = ({ messageId, pinned, pinnedAt }: { messageId: string; pinned: boolean; pinnedAt?: string }) => {
-      setMessages(prev => {
-        const updated = prev.map(msg => msg._id === messageId ? { ...msg, pinned, pinnedAt } : msg);
-        if (pinned) {
-          const msg = updated.find(m => m._id === messageId);
-          if (msg) setPinnedMessage(msg);
-        } else {
-          // Nếu bỏ ghim → tìm tin nhắn ghim khác còn lại
-          const remaining = updated.filter(m => m.pinned).sort((a, b) => new Date(b.pinnedAt || 0).getTime() - new Date(a.pinnedAt || 0).getTime());
-          setPinnedMessage(remaining[0] || null);
-        }
-        return updated;
-      });
-    };
+   const handleMessagePinned = ({ messageId, pinned, pinnedAt }: { messageId: string; pinned: boolean; pinnedAt?: string }) => {
+  setMessages(prev => prev.map(msg => msg._id === messageId ? { ...msg, pinned, pinnedAt } : msg));
+  if (pinned) {
+    const msg = messages.find(m => m._id === messageId);
+    if (msg) setPinnedMessage({ ...msg, pinned: true, pinnedAt });
+  } else {
+    setPinnedMessage(null); // ← bỏ hết, không tìm remaining
+  }
+};
 
     socket.on('receive_message', handleReceiveMessage);
     socket.on('user_typing', handleUserTyping);
@@ -585,7 +580,7 @@ const ChatDetailScreen = () => {
   const formatTime = (dateString: string) =>
     new Date(dateString).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
-  const unpinFromBanner = async (message: Message) => {
+ const unpinFromBanner = async (message: Message) => {
   try {
     const token = await getToken();
     const res = await fetch(`${BASE_URL}/api/chat/${message._id}/pin`, {
@@ -594,15 +589,11 @@ const ChatDetailScreen = () => {
       body: JSON.stringify({ pinned: false }),
     });
     if (res.ok) {
-      setMessages(prev => {
-        const updated = prev.map(msg =>
-          msg._id === message._id ? { ...msg, pinned: false, pinnedAt: undefined } : msg
-        );
-        const remaining = updated.filter(m => m.pinned)
-          .sort((a, b) => new Date(b.pinnedAt || 0).getTime() - new Date(a.pinnedAt || 0).getTime());
-        setPinnedMessage(remaining[0] || null);
-        return updated;
-      });
+      // ✅ Bỏ ghim tất cả — set null luôn, không tìm tin nhắn ghim khác
+      setMessages(prev => prev.map(msg =>
+        msg._id === message._id ? { ...msg, pinned: false, pinnedAt: undefined } : msg
+      ));
+      setPinnedMessage(null); // ← chỉ cần dòng này, bỏ phần tìm remaining
       const socket = socketService.getSocket();
       socket?.emit('message_pinned', {
         messageId: message._id, pinned: false,
