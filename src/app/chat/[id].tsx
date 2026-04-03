@@ -517,17 +517,38 @@ const ChatDetailScreen = () => {
   // ─── Call ────────────────────────────────────────────────────────────────────
   const startCall = async () => {
     if (type === 'group') {
+      // Nhóm → vào thẳng Agora (không cần chờ)
       const channelName = `group_${id}`;
       const socket = socketService.getSocket();
       if (!socket) { Alert.alert('Lỗi', 'Không thể kết nối socket.'); return; }
       socket.emit('group_call_offer', { groupId: id, channelName, callerName: currentUser?.name, callerAvatar: currentUser?.avatar });
       router.push({ pathname: '/call/[channelName]', params: { channelName, targetId: id, isGroup: 'true' } });
     } else {
+      // 1-1 → qua màn hình chờ trước
       const channelName = `private_${currentUser?._id}_${id}`;
       const socket = socketService.getSocket();
       if (!socket) { Alert.alert('Lỗi', 'Không thể kết nối socket.'); return; }
-      socket.emit('call_offer', { to: id, channelName, callerName: currentUser?.name, callerAvatar: currentUser?.avatar, type: 'video' });
-      router.push({ pathname: '/call/[channelName]', params: { channelName, targetId: id, isGroup: 'false' } });
+
+      // Emit call_offer
+      socket.emit('call_offer', {
+        to: id,
+        channelName,
+        callerName: currentUser?.name,
+        callerAvatar: currentUser?.avatar,
+        type: 'video',
+      });
+
+      // Navigate sang màn hình chờ
+      router.push({
+        pathname: '/call/waiting',
+        params: {
+          channelName,
+          targetId: id,
+          targetName: userInfo?.name || '',
+          targetAvatar: userInfo?.avatar || '',
+          isGroup: 'false',
+        },
+      });
     }
   };
 
