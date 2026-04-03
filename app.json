@@ -9,7 +9,7 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "bundleIdentifier": "com.khanhgold.bizchatapp",
-     "infoPlist": {
+      "infoPlist": {
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
@@ -21,7 +21,7 @@
         "NSCameraUsageDescription": "Ứng dụng cần camera để gọi video",
         "NSMicrophoneUsageDescription": "Ứng dụng cần microphone để gọi video",
         "NSAppTransportSecurity": {
-        "NSAllowsArbitraryLoads": true
+          "NSAllowsArbitraryLoads": true
         }
       },
       "appleTeamId": "X6F5T296SH"
@@ -34,7 +34,11 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.khanhgold.bizchatapp" 
+      "package": "com.khanhgold.bizchatapp",
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "output": "static",
@@ -59,7 +63,7 @@
           "iosUrlScheme": "com.googleusercontent.apps.296490459621-jsbtmljnv158ql755gflgakucomafqs6"
         }
       ],
-       [
+      [
         "expo-image-picker",
         {
           "photosPermission": "Cho phép BizChat truy cập thư viện ảnh"
@@ -75,6 +79,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "588d5e75-5ced-408b-88ba-ae9d76163ed8"
+      }
+    },
+    "owner": "khanhgold"
   }
 }

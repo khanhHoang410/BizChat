@@ -126,6 +126,7 @@ const GroupDetailScreen = () => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
 
+  
   const fetchMedia = async (type: 'image' | 'document') => {
   setLoadingMedia(true);
   try {
@@ -232,7 +233,7 @@ const GroupDetailScreen = () => {
   const isAdmin = group?.admins?.some(a => a._id === currentUser?.id) ?? false;
   const isOwner = group?.createdBy?._id === currentUser?.id;
   const myRole = group?.members?.find(m => m.user._id === currentUser?.id)?.role ?? 'member';
-
+  const canAddMember = isAdmin || !group?.settings?.isPrivate; // ← thêm vào đây
   // ─── Edit group ─────────────────────────────────────────────────────────────
 
   const handleSaveEdit = async () => {
@@ -511,16 +512,16 @@ const GroupDetailScreen = () => {
               <Text style={[styles.actionLabel, { color: colors.text }]}>Nhắn tin</Text>
             </TouchableOpacity>
 
-            {isAdmin && (
-              <TouchableOpacity
-                style={styles.actionItem}
-                onPress={() => setShowAddModal(true)}
-              >
-                <View style={[styles.actionIcon, { backgroundColor: colors.tint + '15' }]}>
-                  <Ionicons name="person-add" size={22} color={colors.tint} />
-                </View>
-                <Text style={[styles.actionLabel, { color: colors.text }]}>Thêm TV</Text>
-              </TouchableOpacity>
+           {canAddMember && (
+                  <TouchableOpacity
+                    style={styles.actionItem}
+                    onPress={() => setShowAddModal(true)}
+                  >
+                    <View style={[styles.actionIcon, { backgroundColor: colors.tint + '15' }]}>
+                      <Ionicons name="person-add" size={22} color={colors.tint} />
+                    </View>
+                    <Text style={[styles.actionLabel, { color: colors.text }]}>Thêm TV</Text>
+                  </TouchableOpacity>
             )}
 
             {isAdmin && (
@@ -562,7 +563,7 @@ const GroupDetailScreen = () => {
             <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
               THÀNH VIÊN · {group?.members.length}
             </Text>
-            {isAdmin && (
+          {canAddMember && (
               <TouchableOpacity onPress={() => setShowAddModal(true)}>
                 <Text style={[styles.sectionAction, { color: colors.tint }]}>+ Thêm</Text>
               </TouchableOpacity>

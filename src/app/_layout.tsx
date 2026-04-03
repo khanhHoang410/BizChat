@@ -1,12 +1,13 @@
+import { API_BASE } from "@/constants/api";
+import { AppColorSchemeProvider, useAppColorScheme } from "@/hooks/use-color-scheme";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native";
 import { Stack } from "expo-router";
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Text, View } from "react-native";
 import socketService from "./lib/socket";
-import { API_BASE } from "@/constants/api";
-import { AppColorSchemeProvider, useAppColorScheme } from "@/hooks/use-color-scheme";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+
 SplashScreen.preventAutoHideAsync();
 
 function RootLayoutInner() {
@@ -23,13 +24,11 @@ function RootLayoutInner() {
         const initApp = async()=>{
             try {
                 console.log('123');
-                
             } catch (error) {
                 console.log("123");
             }finally{
                 setIsAppReady(true);
             }
-
         }
         initApp();
     },[])
@@ -46,7 +45,6 @@ function RootLayoutInner() {
     };
 
     useEffect(() => {
-        // Ensure socket is connected for global listeners
         if (!socketService.getSocket()) socketService.connect();
         const socket = socketService.getSocket();
         if (!socket) return;
@@ -56,7 +54,6 @@ function RootLayoutInner() {
                 const token = await AsyncStorage.getItem('userToken');
                 if (!token) return;
 
-                // Global notifications off?
                 const profileRes = await fetch(`${API_BASE}/api/auth/profile`, {
                     headers: { Authorization: `Bearer ${token}` },
                 });
@@ -64,7 +61,6 @@ function RootLayoutInner() {
                 const settings = profile?.user?.settings;
                 if (settings?.notifications === false) return;
 
-                // Per-chat mute
                 const msg = data?.message;
                 if (!msg) return;
                 const isGroup = data?.type === 'group';
@@ -121,7 +117,7 @@ function RootLayoutInner() {
                 </Text>
             </Animated.View>
         )}
-        <Stack >
+        <Stack>
             <Stack.Screen name="Welcome" options={{ headerShown: false }} />
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen name="Login" options={{ headerShown: false }} />
@@ -130,8 +126,7 @@ function RootLayoutInner() {
         </View>
         </ThemeProvider>
     )
-    
-}   
+}
 
 export default function RootLayout() {
     return (
