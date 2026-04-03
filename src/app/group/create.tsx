@@ -1,27 +1,28 @@
+import { API_BASE } from '@/constants/api';
 import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
 import { Stack, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Image,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Switch,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { API_BASE } from '@/constants/api';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 
 const BASE_URL = API_BASE;
 
@@ -47,6 +48,8 @@ const CreateGroupScreen = () => {
   const [selectedUsers, setSelectedUsers] = useState<User[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loadingUsers, setLoadingUsers] = useState(true);
+  const [groupAvatar, setGroupAvatar] = useState<string | null>(null);
+
 
   const fetchUsers = async (search = '') => {
     try {
@@ -72,6 +75,14 @@ const CreateGroupScreen = () => {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
+  const pickAvatar = async () => {
+  const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (status !== 'granted') { Alert.alert('Cần quyền truy cập', 'Cho phép truy cập thư viện ảnh'); return; }
+  const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.7 });
+  if (!result.canceled && result.assets?.[0]) {
+    setGroupAvatar(result.assets[0].uri);
+  }
+};
   const toggleUser = (user: User) => {
     setSelectedUsers(prev =>
       prev.some(u => u._id === user._id)
@@ -82,51 +93,67 @@ const CreateGroupScreen = () => {
 
   const isSelected = (userId: string) => selectedUsers.some(u => u._id === userId);
 
-  const handleCreate = async () => {
-    if (!groupName.trim()) {
-      Alert.alert('Lỗi', 'Vui lòng nhập tên nhóm');
-      return;
-    }
-    if (selectedUsers.length === 0) {
-      Alert.alert('Lỗi', 'Vui lòng chọn ít nhất 1 thành viên');
-      return;
-    }
+ const handleCreate = async () => {
+  if (!groupName.trim()) {
+    Alert.alert('Lỗi', 'Vui lòng nhập tên nhóm');
+    return;
+  }
+  if (selectedUsers.length === 0) {
+    Alert.alert('Lỗi', 'Vui lòng chọn ít nhất 1 thành viên');
+    return;
+  }
 
-    setCreating(true);
-    try {
-      const token = await AsyncStorage.getItem('userToken');
-      const response = await fetch(`${BASE_URL}/api/groups`, {
+  setCreating(true);
+  try {
+    const token = await AsyncStorage.getItem('userToken');
+
+    // Upload avatar nếu có
+    let avatarUrl = '';
+    if (groupAvatar) {
+      const formData = new FormData();
+      formData.append('file', { uri: groupAvatar, type: 'image/jpeg', name: 'group_avatar.jpg' } as any);
+      const uploadRes = await fetch(`${BASE_URL}/api/chat/upload/image`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          name: groupName.trim(),
-          description: description.trim(),
-          memberIds: selectedUsers.map(u => u._id),
-          isPrivate,
-        }),
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
       });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        Alert.alert('✅ Thành công', `Nhóm "${groupName}" đã được tạo!`, [
-          {
-            text: 'Vào nhóm',
-            onPress: () => router.replace(`/chat/${data.group._id}?type=group` as any),
-          },
-        ]);
-      } else {
-        Alert.alert('Lỗi', data.error || 'Tạo nhóm thất bại');
-      }
-    } catch (error) {
-      Alert.alert('Lỗi', 'Không thể kết nối đến server');
-    } finally {
-      setCreating(false);
+      const uploadData = await uploadRes.json();
+      avatarUrl = uploadData.file?.url || '';
     }
-  };
+
+    const response = await fetch(`${BASE_URL}/api/groups`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        name: groupName.trim(),
+        description: description.trim(),
+        memberIds: selectedUsers.map(u => u._id),
+        isPrivate,
+        avatar: avatarUrl, // ← thêm
+      }),
+    });
+
+    const data = await response.json();
+
+    if (response.ok) {
+      Alert.alert('✅ Thành công', `Nhóm "${groupName}" đã được tạo!`, [
+        {
+          text: 'Vào nhóm',
+          onPress: () => router.replace(`/chat/${data.group._id}?type=group` as any),
+        },
+      ]);
+    } else {
+      Alert.alert('Lỗi', data.error || 'Tạo nhóm thất bại');
+    }
+  } catch (error) {
+    Alert.alert('Lỗi', 'Không thể kết nối đến server');
+  } finally {
+    setCreating(false);
+  }
+};
 
   const renderUserItem = ({ item }: { item: User }) => {
     const selected = isSelected(item._id);
@@ -231,14 +258,19 @@ const CreateGroupScreen = () => {
           <View style={[styles.section, { borderBottomColor: colors.borderColor }]}>
             {/* Avatar placeholder */}
             <View style={styles.avatarPlaceholderRow}>
-              <TouchableOpacity
-                style={[styles.avatarPlaceholder, { backgroundColor: colors.backgroundElement }]}
-              >
-                <Ionicons name="camera-outline" size={28} color={colors.textSecondary} />
-                <Text style={[styles.avatarPlaceholderText, { color: colors.textSecondary }]}>
-                  Ảnh nhóm
-                </Text>
-              </TouchableOpacity>
+             <TouchableOpacity
+          style={[styles.avatarPlaceholder, { backgroundColor: colors.backgroundElement }]}
+          onPress={pickAvatar}  // ← thêm dòng này
+        >
+          {groupAvatar ? (
+            <Image source={{ uri: groupAvatar }} style={{ width: 80, height: 80, borderRadius: 24 }} />
+          ) : (
+            <>  
+              <Ionicons name="camera-outline" size={28} color={colors.textSecondary} />
+              <Text style={[styles.avatarPlaceholderText, { color: colors.textSecondary }]}>Ảnh nhóm</Text>
+            </>
+          )}
+        </TouchableOpacity>
             </View>
 
             {/* Group name */}
@@ -290,7 +322,6 @@ const CreateGroupScreen = () => {
               />
             </View>
           </View>
-
           {/* Selected members preview */}
           {selectedUsers.length > 0 && (
             <View style={[styles.selectedSection, { borderBottomColor: colors.borderColor }]}>
@@ -315,7 +346,7 @@ const CreateGroupScreen = () => {
                         </View>
                       )}
                       <View style={[styles.removeIcon, { backgroundColor: colors.error }]}>
-                        <Ionicons name="close" size={10} color="#fff" />
+                        <Ionicons name="close" size={12} color="#fff" />
                       </View>
                     </View>
                     <Text style={[styles.selectedName, { color: colors.textSecondary }]} numberOfLines={1}>
@@ -448,7 +479,7 @@ const styles = StyleSheet.create({
   selectedAvatarText: { fontSize: 20, fontWeight: 'bold' },
   removeIcon: {
     position: 'absolute',
-    top: -2,
+    top: -0,
     right: -2,
     width: 18,
     height: 18,

@@ -1,7 +1,9 @@
 import { API_BASE } from '@/constants/api';
 import { Colors } from '@/constants/theme';
+import { useAppColorScheme } from '@/hooks/use-color-scheme';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -21,7 +23,6 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useAppColorScheme } from '@/hooks/use-color-scheme';
 
 const BASE_URL = API_BASE;
 
@@ -110,6 +111,8 @@ const GroupDetailScreen = () => {
   // Member options
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
   const [showMemberOptions, setShowMemberOptions] = useState(false);
+  const [editAvatar, setEditAvatar] = useState<string | null>(null);
+
 
   const getToken = () => AsyncStorage.getItem('userToken');
 
@@ -126,6 +129,15 @@ const GroupDetailScreen = () => {
     setMuted(mutedGroups.some((x: any) => String(x) === String(id)));
   };
 
+  const pickEditAvatar = async () => {
+  const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (status !== 'granted') { Alert.alert('Cần quyền', 'Cho phép truy cập thư viện ảnh'); return; }
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    allowsEditing: true, aspect: [1, 1], quality: 0.7,
+  });
+  if (!result.canceled && result.assets?.[0]) setEditAvatar(result.assets[0].uri);
+};
   const fetchGroup = useCallback(async () => {
     try {
       const token = await getToken();
@@ -176,35 +188,39 @@ const GroupDetailScreen = () => {
   // ─── Edit group ─────────────────────────────────────────────────────────────
 
   const handleSaveEdit = async () => {
-    if (!editName.trim()) {
-      Alert.alert('Lỗi', 'Tên nhóm không được để trống');
-      return;
-    }
-    setSaving(true);
-    try {
-      const token = await getToken();
-      const res = await fetch(`${BASE_URL}/api/groups/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          name: editName.trim(),
-          description: editDesc.trim(),
-          settings: { isPrivate: editPrivate },
-        }),
+  if (!editName.trim()) { Alert.alert('Lỗi', 'Tên nhóm không được để trống'); return; }
+  setSaving(true);
+  try {
+    const token = await getToken();
+
+    // Upload avatar nếu có chọn ảnh mới
+    let avatarUrl = group?.avatar || '';
+    if (editAvatar) {
+      const formData = new FormData();
+      formData.append('file', { uri: editAvatar, type: 'image/jpeg', name: 'group_avatar.jpg' } as any);
+      const uploadRes = await fetch(`${BASE_URL}/api/chat/upload/image`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: formData,
       });
-      const data = await res.json();
-      if (res.ok) {
-        setGroup(data.group);
-        setShowEditModal(false);
-      } else {
-        Alert.alert('Lỗi', data.error);
-      }
-    } catch {
-      Alert.alert('Lỗi', 'Không thể cập nhật thông tin nhóm');
-    } finally {
-      setSaving(false);
+      const uploadData = await uploadRes.json();
+      avatarUrl = uploadData.file?.url || avatarUrl;
     }
-  };
+
+    const res = await fetch(`${BASE_URL}/api/groups/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        name: editName.trim(),
+        description: editDesc.trim(),
+        avatar: avatarUrl, // ← thêm
+        settings: { isPrivate: editPrivate },
+      }),
+    });
+    const data = await res.json();
+    if (res.ok) { setGroup(data.group); setEditAvatar(null); setShowEditModal(false); }
+    else Alert.alert('Lỗi', data.error);
+  } catch { Alert.alert('Lỗi', 'Không thể cập nhật thông tin nhóm'); }
+  finally { setSaving(false); }
+};
 
   // ─── Search users ────────────────────────────────────────────────────────────
 
@@ -373,7 +389,6 @@ const GroupDetailScreen = () => {
 
   const renderRow = ({ item }: { item: RowItem }) => {
     switch (item.kind) {
-
       // ── Hero ──
       case 'hero':
         return (
@@ -622,7 +637,7 @@ const GroupDetailScreen = () => {
 
   // ─── Edit Modal ───────────────────────────────────────────────────────────────
 
-  const renderEditModal = () => (
+const renderEditModal = () => (
     <Modal
       visible={showEditModal}
       transparent
@@ -633,10 +648,27 @@ const GroupDetailScreen = () => {
         <View style={styles.modalOverlay}>
           <TouchableWithoutFeedback>
             <View style={[styles.editSheet, { backgroundColor: colors.background }]}>
-              {/* Handle */}
               <View style={[styles.sheetHandle, { backgroundColor: colors.borderColor }]} />
 
               <Text style={[styles.sheetTitle, { color: colors.text }]}>Chỉnh sửa nhóm</Text>
+
+              {/* ✅ Avatar picker — thêm vào đây */}
+              <TouchableOpacity style={{ alignItems: 'center', marginBottom: 16 }} onPress={pickEditAvatar}>
+                {editAvatar || group?.avatar ? (
+                  <Image
+                    source={{ uri: editAvatar || group?.avatar }}
+                    style={{ width: 80, height: 80, borderRadius: 24 }}
+                  />
+                ) : (
+                  <View style={{ width: 80, height: 80, borderRadius: 24, backgroundColor: colors.tint + '25', justifyContent: 'center', alignItems: 'center' }}>
+                    <Ionicons name="people" size={40} color={colors.tint} />
+                  </View>
+                )}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 8 }}>
+                  <Ionicons name="camera-outline" size={14} color={colors.tint} />
+                  <Text style={{ color: colors.tint, fontSize: 13, fontWeight: '600' }}>Đổi ảnh nhóm</Text>
+                </View>
+              </TouchableOpacity>
 
               {/* Name */}
               <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Tên nhóm</Text>
@@ -840,14 +872,14 @@ const GroupDetailScreen = () => {
                   </TouchableOpacity>
                 )}
 
-                {isAdmin && !isMemMod && !isMemAdmin && (
+                {/* {isAdmin && !isMemMod && !isMemAdmin && (
                   <TouchableOpacity style={styles.optRow} onPress={() => handlePromote(mem, 'moderator')}>
                     <View style={[styles.optIcon, { backgroundColor: '#FB8C0018' }]}>
                       <Ionicons name="star-outline" size={19} color="#FB8C00" />
                     </View>
                     <Text style={[styles.optText, { color: colors.text }]}>Thăng lên Moderator</Text>
                   </TouchableOpacity>
-                )}
+                )} */}
 
                 {isAdmin && (isMemAdmin || isMemMod) && (
                   <TouchableOpacity style={styles.optRow} onPress={() => handleDemote(mem)}>

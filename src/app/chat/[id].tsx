@@ -585,6 +585,35 @@ const ChatDetailScreen = () => {
   const formatTime = (dateString: string) =>
     new Date(dateString).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
+  const unpinFromBanner = async (message: Message) => {
+  try {
+    const token = await getToken();
+    const res = await fetch(`${BASE_URL}/api/chat/${message._id}/pin`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ pinned: false }),
+    });
+    if (res.ok) {
+      setMessages(prev => {
+        const updated = prev.map(msg =>
+          msg._id === message._id ? { ...msg, pinned: false, pinnedAt: undefined } : msg
+        );
+        const remaining = updated.filter(m => m.pinned)
+          .sort((a, b) => new Date(b.pinnedAt || 0).getTime() - new Date(a.pinnedAt || 0).getTime());
+        setPinnedMessage(remaining[0] || null);
+        return updated;
+      });
+      const socket = socketService.getSocket();
+      socket?.emit('message_pinned', {
+        messageId: message._id, pinned: false,
+        receiverId: type === 'private' ? id : undefined,
+        groupId: type === 'group' ? id : undefined,
+      });
+    }
+  } catch (error) { console.error('Unpin error:', error); }
+};
+
+
   // ✅ Banner tin nhắn ghim — giống Zalo/Messenger
   const renderPinnedBanner = () => {
     if (!pinnedMessage) return null;
@@ -611,11 +640,7 @@ const ChatDetailScreen = () => {
           <Text style={[styles.pinnedPreview, { color: colors.text }]} numberOfLines={1}>{preview}</Text>
         </View>
         <TouchableOpacity
-          onPress={() => {
-            // Bỏ ghim từ banner
-            setSelectedMessage(pinnedMessage);
-            pinMessage();
-          }}
+         onPress={() => unpinFromBanner(pinnedMessage)}
           hitSlop={8}
         >
           <Ionicons name="close" size={18} color={colors.textSecondary} />
