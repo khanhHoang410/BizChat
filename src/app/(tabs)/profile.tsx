@@ -1,5 +1,6 @@
 import { API_BASE } from '@/constants/api';
 import { Colors } from '@/constants/theme';
+import { useAppColorScheme } from '@/hooks/use-color-scheme';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
@@ -9,17 +10,19 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
   ScrollView,
   StatusBar,
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import socketService from '../lib/socket';
-import { useAppColorScheme } from '@/hooks/use-color-scheme';
 
 type UserInfo = {
   id: string;
@@ -28,6 +31,7 @@ type UserInfo = {
   avatar?: string;
   status: 'online' | 'offline' | 'away';
   role: string;
+  createdAt?: string; // ← thêm
   settings?: {
     notifications: boolean;
     theme: 'light' | 'dark';
@@ -45,7 +49,10 @@ const ProfileScreen = () => {
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
-  // Fetch thông tin user
+  // ── Edit name modal ──────────────────────────────────────────────────────────
+  const [showEditNameModal, setShowEditNameModal] = useState(false);
+  const [editNameText, setEditNameText] = useState('');
+
   const fetchUserProfile = async () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
@@ -53,7 +60,6 @@ const ProfileScreen = () => {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
-      console.log('👤 Profile:', data.user);
       setUser(data.user);
       setNotifications(data.user.settings?.notifications ?? true);
     } catch (error) {
@@ -67,26 +73,20 @@ const ProfileScreen = () => {
     fetchUserProfile();
   }, []);
 
-  // Cập nhật cài đặt
   const updateSettings = async (key: string, value: any) => {
     if (!user) return;
-    
     setSaving(true);
     try {
       const token = await AsyncStorage.getItem('userToken');
       const response = await fetch(`${API_BASE}/api/users/profile`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          settings: { ...user.settings, [key]: value }
-        })
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ settings: { ...user.settings, [key]: value } })
       });
-
       const data = await response.json();
-      if (response.ok && data.user) setUser(data.user);
+      if (response.ok && data.user) {
+        setUser(prev => ({ ...prev!, settings: data.user.settings })); // ← chỉ update settings
+      }
     } catch (error) {
       console.error('Update settings error:', error);
     } finally {
@@ -94,35 +94,29 @@ const ProfileScreen = () => {
     }
   };
 
-  // Đăng xuất
   const handleLogout = async () => {
-    Alert.alert(
-      'Đăng xuất',
-      'Bạn có chắc chắn muốn đăng xuất?',
-      [
-        { text: 'Hủy', style: 'cancel' },
-        {
-          text: 'Đăng xuất',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const token = await AsyncStorage.getItem('userToken');
-              await fetch(`${API_BASE}/api/auth/logout`, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}` }
-              });
-              
-              await AsyncStorage.removeItem('userToken');
-              await AsyncStorage.removeItem('userInfo');
-              socketService.disconnect();
-              router.replace('/Login');
-            } catch (error) {
-              console.error('Logout error:', error);
-            }
+    Alert.alert('Đăng xuất', 'Bạn có chắc chắn muốn đăng xuất?', [
+      { text: 'Hủy', style: 'cancel' },
+      {
+        text: 'Đăng xuất',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            const token = await AsyncStorage.getItem('userToken');
+            await fetch(`${API_BASE}/api/auth/logout`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${token}` }
+            });
+            await AsyncStorage.removeItem('userToken');
+            await AsyncStorage.removeItem('userInfo');
+            socketService.disconnect();
+            router.replace('/Login');
+          } catch (error) {
+            console.error('Logout error:', error);
           }
         }
-      ]
-    );
+      }
+    ]);
   };
 
   const uploadAvatar = async (uri: string, mimeType?: string) => {
@@ -130,12 +124,7 @@ const ProfileScreen = () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
       const form = new FormData();
-      form.append('file', {
-        uri,
-        type: mimeType || 'image/jpeg',
-        name: `avatar_${Date.now()}.jpg`,
-      } as any);
-
+      form.append('file', { uri, type: mimeType || 'image/jpeg', name: `avatar_${Date.now()}.jpg` } as any);
       const res = await fetch(`${API_BASE}/api/users/avatar`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
@@ -143,7 +132,7 @@ const ProfileScreen = () => {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'Upload avatar failed');
-      if (data.user) setUser(data.user);
+      if (data.user) setUser(prev => ({ ...prev!, avatar: data.user.avatar }));
     } catch (e: any) {
       Alert.alert('Lỗi', e?.message || 'Không thể cập nhật avatar');
     } finally {
@@ -157,10 +146,7 @@ const ProfileScreen = () => {
         text: 'Chụp ảnh',
         onPress: async () => {
           const { status } = await ImagePicker.requestCameraPermissionsAsync();
-          if (status !== 'granted') {
-            Alert.alert('Cần quyền', 'Vui lòng cho phép truy cập Camera trong Cài đặt.');
-            return;
-          }
+          if (status !== 'granted') { Alert.alert('Cần quyền', 'Vui lòng cho phép truy cập Camera trong Cài đặt.'); return; }
           const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, aspect: [1, 1], quality: 0.8 });
           if (result.canceled || !result.assets?.[0]) return;
           await uploadAvatar(result.assets[0].uri, result.assets[0].mimeType);
@@ -170,10 +156,7 @@ const ProfileScreen = () => {
         text: 'Chọn từ thư viện',
         onPress: async () => {
           const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-          if (status !== 'granted') {
-            Alert.alert('Cần quyền', 'Vui lòng cho phép truy cập Thư viện ảnh trong Cài đặt.');
-            return;
-          }
+          if (status !== 'granted') { Alert.alert('Cần quyền', 'Vui lòng cho phép truy cập Thư viện ảnh trong Cài đặt.'); return; }
           const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.8 });
           if (result.canceled || !result.assets?.[0]) return;
           await uploadAvatar(result.assets[0].uri, result.assets[0].mimeType);
@@ -183,9 +166,37 @@ const ProfileScreen = () => {
     ]);
   };
 
+  // ── Sửa tên — Modal hỗ trợ cả iOS và Android ─────────────────────────────────
   const handleEditName = () => {
-    // TODO: Implement sửa tên
-    Alert.alert('Thông báo', 'Tính năng đang phát triển');
+    setEditNameText(user?.name || '');
+    setShowEditNameModal(true);
+  };
+
+  const handleSaveName = async () => {
+    if (!editNameText.trim() || editNameText.trim() === user?.name) {
+      setShowEditNameModal(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      const res = await fetch(`${API_BASE}/api/users/profile`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: editNameText.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok && data.user) {
+        setUser(prev => ({ ...prev!, settings: data.user.settings }));
+        setShowEditNameModal(false);
+      } else {
+        Alert.alert('Lỗi', data.error || 'Không thể cập nhật tên');
+      }
+    } catch {
+      Alert.alert('Lỗi', 'Không thể kết nối server');
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (loading) {
@@ -199,7 +210,58 @@ const ProfileScreen = () => {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar barStyle={scheme === 'dark' ? 'light-content' : 'dark-content'} />
-      
+
+      {/* ── Modal sửa tên ── */}
+      <Modal
+        visible={showEditNameModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowEditNameModal(false)}
+      >
+        <TouchableWithoutFeedback onPress={() => setShowEditNameModal(false)}>
+          <View style={styles.modalOverlay}>
+            <TouchableWithoutFeedback>
+              <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>Đổi tên</Text>
+                <TextInput
+                  style={[styles.modalInput, {
+                    color: colors.text,
+                    borderColor: colors.borderColor,
+                    backgroundColor: colors.backgroundElement,
+                  }]}
+                  value={editNameText}
+                  onChangeText={setEditNameText}
+                  placeholder="Nhập tên mới"
+                  placeholderTextColor={colors.textSecondary}
+                  autoFocus
+                  maxLength={50}
+                  returnKeyType="done"
+                  onSubmitEditing={handleSaveName}
+                />
+                <View style={styles.modalButtons}>
+                  <TouchableOpacity
+                    style={[styles.modalBtn, { backgroundColor: colors.backgroundElement }]}
+                    onPress={() => setShowEditNameModal(false)}
+                  >
+                    <Text style={[styles.modalBtnText, { color: colors.text }]}>Hủy</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modalBtn, { backgroundColor: colors.tint }]}
+                    onPress={handleSaveName}
+                    disabled={saving}
+                  >
+                    {saving
+                      ? <ActivityIndicator size="small" color="#fff" />
+                      : <Text style={[styles.modalBtnText, { color: '#fff' }]}>Lưu</Text>
+                    }
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.header}>
@@ -222,37 +284,30 @@ const ProfileScreen = () => {
               </View>
             )}
             <View style={[styles.editBadge, { backgroundColor: colors.tint }]}>
-              {uploadingAvatar ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Ionicons name="camera" size={14} color="#fff" />
-              )}
+              {uploadingAvatar
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <Ionicons name="camera" size={14} color="#fff" />
+              }
             </View>
           </TouchableOpacity>
-          
+
           <View style={styles.nameSection}>
             <Text style={[styles.name, { color: colors.text }]}>{user?.name}</Text>
-            <TouchableOpacity onPress={handleEditName}>
+            <TouchableOpacity onPress={handleEditName} hitSlop={8}>
               <Ionicons name="pencil" size={18} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
-          
+
           <Text style={[styles.email, { color: colors.textSecondary }]}>{user?.email}</Text>
-          
-          <View style={[styles.statusBadge, { 
-            backgroundColor: user?.status === 'online' 
-              ? colors.onlineStatus + '20' 
-              : colors.offlineStatus + '20' 
+
+          <View style={[styles.statusBadge, {
+            backgroundColor: user?.status === 'online' ? colors.onlineStatus + '20' : colors.offlineStatus + '20'
           }]}>
-            <View style={[styles.statusDot, { 
-              backgroundColor: user?.status === 'online' 
-                ? colors.onlineStatus 
-                : colors.offlineStatus 
+            <View style={[styles.statusDot, {
+              backgroundColor: user?.status === 'online' ? colors.onlineStatus : colors.offlineStatus
             }]} />
-            <Text style={[styles.statusText, { 
-              color: user?.status === 'online' 
-                ? colors.onlineStatus 
-                : colors.offlineStatus 
+            <Text style={[styles.statusText, {
+              color: user?.status === 'online' ? colors.onlineStatus : colors.offlineStatus
             }]}>
               {user?.status === 'online' ? 'Đang hoạt động' : 'Ngoại tuyến'}
             </Text>
@@ -262,7 +317,7 @@ const ProfileScreen = () => {
         {/* Settings Section */}
         <View style={[styles.section, { borderTopColor: colors.borderColor }]}>
           <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>CÀI ĐẶT</Text>
-          
+
           <View style={[styles.settingItem, { borderBottomColor: colors.borderColor }]}>
             <View style={styles.settingLeft}>
               <Ionicons name="notifications" size={22} color={colors.tint} />
@@ -270,10 +325,7 @@ const ProfileScreen = () => {
             </View>
             <Switch
               value={notifications}
-              onValueChange={(value) => {
-                setNotifications(value);
-                updateSettings('notifications', value);
-              }}
+              onValueChange={(value) => { setNotifications(value); updateSettings('notifications', value); }}
               trackColor={{ false: colors.borderColor, true: colors.tint }}
               thumbColor="#fff"
               disabled={saving}
@@ -305,7 +357,9 @@ const ProfileScreen = () => {
             <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
           </TouchableOpacity>
 
-          <TouchableOpacity style={[styles.settingItem, { borderBottomColor: colors.borderColor }]}>
+          <TouchableOpacity style={[styles.settingItem, { borderBottomColor: colors.borderColor }]} 
+          onPress={() => router.push('/setting/help' as any)}
+          >
             <View style={styles.settingLeft}>
               <Ionicons name="help-circle" size={22} color={colors.tint} />
               <Text style={[styles.settingText, { color: colors.text }]}>Trợ giúp</Text>
@@ -317,7 +371,7 @@ const ProfileScreen = () => {
         {/* Account Section */}
         <View style={[styles.section, { borderTopColor: colors.borderColor }]}>
           <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>TÀI KHOẢN</Text>
-          
+
           <View style={[styles.infoItem, { borderBottomColor: colors.borderColor }]}>
             <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Vai trò</Text>
             <Text style={[styles.infoValue, { color: colors.text }]}>
@@ -335,14 +389,16 @@ const ProfileScreen = () => {
           <View style={[styles.infoItem, { borderBottomColor: colors.borderColor }]}>
             <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Tham gia</Text>
             <Text style={[styles.infoValue, { color: colors.text }]}>
-              {/* TODO: Format ngày tham gia */}
-              Tháng 3, 2026
+              {user?.createdAt
+                ? new Date(user.createdAt).toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' })
+                : 'Không rõ'
+              }
             </Text>
           </View>
         </View>
 
         {/* Logout Button */}
-        <TouchableOpacity 
+        <TouchableOpacity
           style={[styles.logoutButton, { borderTopColor: colors.borderColor }]}
           onPress={handleLogout}
         >
@@ -351,9 +407,7 @@ const ProfileScreen = () => {
         </TouchableOpacity>
 
         <View style={styles.version}>
-          <Text style={[styles.versionText, { color: colors.textSecondary }]}>
-            Phiên bản 1.0.0
-          </Text>
+          <Text style={[styles.versionText, { color: colors.textSecondary }]}>Phiên bản 1.0.0</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -363,145 +417,48 @@ const ProfileScreen = () => {
 export default ProfileScreen;
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  centerContent: {
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  container: { flex: 1 },
+  centerContent: { justifyContent: 'center', alignItems: 'center' },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 12,
   },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-  },
-  avatarSection: {
-    alignItems: 'center',
-    paddingVertical: 24,
-  },
-  avatarWrapper: {
-    position: 'relative',
-    marginBottom: 16,
-  },
-  avatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarText: {
-    fontSize: 40,
-    fontWeight: 'bold',
-  },
+  headerTitle: { fontSize: 24, fontWeight: 'bold' },
+  avatarSection: { alignItems: 'center', paddingVertical: 24 },
+  avatarWrapper: { position: 'relative', marginBottom: 16 },
+  avatar: { width: 100, height: 100, borderRadius: 50, justifyContent: 'center', alignItems: 'center' },
+  avatarText: { fontSize: 40, fontWeight: 'bold' },
   editBadge: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#fff',
+    position: 'absolute', bottom: 0, right: 0,
+    width: 30, height: 30, borderRadius: 15,
+    justifyContent: 'center', alignItems: 'center',
+    borderWidth: 2, borderColor: '#fff',
   },
-  nameSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
-  },
-  name: {
-    fontSize: 22,
-    fontWeight: 'bold',
-  },
-  email: {
-    fontSize: 14,
-    marginBottom: 12,
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 16,
-    gap: 6,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  section: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderTopWidth: 1,
-  },
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 8,
-    marginTop: 8,
-  },
-  settingItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-  },
-  settingLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  settingText: {
-    fontSize: 16,
-  },
-  infoItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-  },
-  infoLabel: {
-    fontSize: 14,
-  },
-  infoValue: {
-    fontSize: 14,
-    fontWeight: '500',
-    maxWidth: '60%',
-  },
-  logoutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 16,
-    marginTop: 16,
-    borderTopWidth: 1,
-  },
-  logoutText: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  version: {
-    alignItems: 'center',
-    paddingVertical: 24,
-  },
-  versionText: {
-    fontSize: 12,
-  },
+  nameSection: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  name: { fontSize: 22, fontWeight: 'bold' },
+  email: { fontSize: 14, marginBottom: 12 },
+  statusBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 16, gap: 6 },
+  statusDot: { width: 8, height: 8, borderRadius: 4 },
+  statusText: { fontSize: 12, fontWeight: '500' },
+  section: { paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 1 },
+  sectionTitle: { fontSize: 12, fontWeight: '600', marginBottom: 8, marginTop: 8 },
+  settingItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1 },
+  settingLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  settingText: { fontSize: 16 },
+  infoItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1 },
+  infoLabel: { fontSize: 14 },
+  infoValue: { fontSize: 14, fontWeight: '500', maxWidth: '60%' },
+  logoutButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 16, marginTop: 16, borderTopWidth: 1 },
+  logoutText: { fontSize: 16, fontWeight: '600' },
+  version: { alignItems: 'center', paddingVertical: 24 },
+  versionText: { fontSize: 12 },
+
+  // ── Modal sửa tên ──
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
+  modalContainer: { width: '100%', borderRadius: 16, padding: 24 },
+  modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
+  modalInput: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, marginBottom: 20 },
+  modalButtons: { flexDirection: 'row', gap: 12 },
+  modalBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  modalBtnText: { fontSize: 15, fontWeight: '600' },
 });
