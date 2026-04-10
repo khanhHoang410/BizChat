@@ -40,6 +40,7 @@ type Message = {
   isRevoked?: boolean;
   pinned?: boolean;
   pinnedAt?: string;
+  threadCount?: number; // số reply trong thread
 };
 
 type UserInfo = {
@@ -54,6 +55,12 @@ type GroupInfo = {
   name: string;
   avatar?: string;
   membersCount: number;
+};
+
+type ThreadInfo = {
+  parentId: string;
+  replyCount: number;
+  lastReplyAt: string;
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -98,6 +105,16 @@ const ChatDetailScreen = () => {
   const [showMessageOptions, setShowMessageOptions] = useState(false);
   // Tin nhắn được ghim (hiện banner đầu màn hình)
   const [pinnedMessage, setPinnedMessage] = useState<Message | null>(null);
+  // ── Thread ────────────────────────────────────────────────────────────────────
+  const [threadCounts, setThreadCounts] = useState<Record<string, number>>({});
+  const [threadByParentId, setThreadByParentId] = useState<Record<string, ThreadInfo>>({});
+  const [showThread, setShowThread] = useState(false);
+  const [activeThreadParentId, setActiveThreadParentId] = useState<string | null>(null);
+  const [threadMessages, setThreadMessages] = useState<Message[]>([]);
+  const [threadParent, setThreadParent] = useState<Message | null>(null);
+  const [threadInput, setThreadInput] = useState('');
+  const [sendingThread, setSendingThread] = useState(false);
+  const threadListRef = useRef<FlatList>(null);
 
   const getToken = () => AsyncStorage.getItem('userToken');
 
@@ -136,11 +153,76 @@ const ChatDetailScreen = () => {
       const data = await response.json();
       const msgs: Message[] = data.messages || [];
       setMessages(msgs);
-      // Lấy tin nhắn ghim mới nhất
       const pinned = msgs.filter(m => m.pinned).sort((a, b) => new Date(b.pinnedAt || 0).getTime() - new Date(a.pinnedAt || 0).getTime())[0];
       setPinnedMessage(pinned || null);
+      // Load thread summary cho nhóm
+      if (type === 'group') fetchThreadSummary();
     } catch (error) { console.error('Fetch messages error:', error); }
     finally { setLoading(false); }
+  };
+
+  const fetchThreadSummary = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/api/chat/thread-summary/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (res.ok && data.threads) {
+        const counts: Record<string, number> = {};
+        data.threads.forEach((t: any) => { counts[t.parentId] = t.replyCount; });
+        setThreadCounts(counts);
+      }
+    } catch (e) { console.error('Thread summary error:', e); }
+  };
+
+  const openThread = async (parentId: string) => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/api/chat/thread/${parentId}`, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (res.ok) {
+        setThreadParent(data.parent);
+        setThreadMessages(data.messages || []);
+        setActiveThreadParentId(parentId);
+        setShowThread(true);
+      }
+    } catch (e) { console.error('Open thread error:', e); }
+  };
+
+  const sendThreadMessage = async () => {
+    if (!threadInput.trim() || !activeThreadParentId || sendingThread) return;
+    const content = threadInput.trim();
+    setThreadInput('');
+    setSendingThread(true);
+    try {
+      // Thử socket trước
+      const socket = socketService.getSocket();
+      if (socket?.connected) {
+        socket.emit('send_thread_message', { parentId: activeThreadParentId, content, type: 'text' });
+        // Optimistic update
+        const tempMsg: Message = {
+          _id: `temp_${Date.now()}`,
+          sender: { _id: currentUser?._id || '', name: currentUser?.name || '', avatar: currentUser?.avatar },
+          content, type: 'text', createdAt: new Date().toISOString(), readBy: [],
+        };
+        setThreadMessages(prev => [...prev, tempMsg]);
+        setTimeout(() => threadListRef.current?.scrollToEnd({ animated: true }), 100);
+      } else {
+        // Fallback REST
+        const token = await getToken();
+        const res = await fetch(`${BASE_URL}/api/chat/thread/${activeThreadParentId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ content, type: 'text' }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setThreadMessages(prev => [...prev, data.message]);
+          setThreadCounts(prev => ({ ...prev, [activeThreadParentId]: (prev[activeThreadParentId] || 0) + 1 }));
+          setTimeout(() => threadListRef.current?.scrollToEnd({ animated: true }), 100);
+        }
+      }
+    } catch (e) { console.error('Send thread error:', e); }
+    finally { setSendingThread(false); }
   };
 
   // ─── Mark as read ─────────────────────────────────────────────────────────────
@@ -181,6 +263,9 @@ const ChatDetailScreen = () => {
     if (!socket) return;
 
     const handleReceiveMessage = (data: any) => {
+      // ← Bỏ qua tin nhắn thuộc thread (có field thread)
+      if (data.message?.thread) return;
+
       if (type === 'private' && data.type === 'private' && data.message.sender._id === id) {
         setMessages(prev => [...prev, data.message]);
         flatListRef.current?.scrollToEnd({ animated: true });
@@ -205,7 +290,12 @@ const ChatDetailScreen = () => {
     };
 
     const handleMessageSent = (data: { messageId: string }) => {
-      setMessages(prev => prev.map(msg => msg._id.startsWith('temp_') ? { ...msg, _id: data.messageId } : msg));
+      // Chỉ update temp trong chat chính, không đụng thread
+      setMessages(prev => {
+        const hasTemp = prev.some(msg => msg._id.startsWith('temp_'));
+        if (!hasTemp) return prev;
+        return prev.map(msg => msg._id.startsWith('temp_') ? { ...msg, _id: data.messageId } : msg);
+      });
     };
 
     const handleMessageError = () => {
@@ -232,7 +322,24 @@ const ChatDetailScreen = () => {
   }
 };
 
+    // ── Thread message nhận được qua socket ──────────────────────────────────
+    const handleReceiveThreadMessage = ({ parentId, message }: { parentId: string; message: Message }) => {
+      // Cập nhật threadCounts
+      setThreadCounts(prev => ({ ...prev, [parentId]: (prev[parentId] || 0) + 1 }));
+      // Nếu đang mở thread này thì thêm message vào
+      if (activeThreadParentId === parentId) {
+        setThreadMessages(prev => {
+          // Thay temp nếu có
+          const hastemp = prev.some(m => m._id.startsWith('temp_'));
+          if (hastemp) return prev.map(m => m._id.startsWith('temp_') ? message : m);
+          return [...prev, message];
+        });
+        setTimeout(() => threadListRef.current?.scrollToEnd({ animated: true }), 100);
+      }
+    };
+
     socket.on('receive_message', handleReceiveMessage);
+    socket.on('receive_thread_message', handleReceiveThreadMessage);
     socket.on('user_typing', handleUserTyping);
     socket.on('messages_read', handleMessagesRead);
     socket.on('message_sent', handleMessageSent);
@@ -244,6 +351,7 @@ const ChatDetailScreen = () => {
 
     return () => {
       socket.off('receive_message', handleReceiveMessage);
+      socket.off('receive_thread_message', handleReceiveThreadMessage);
       socket.off('user_typing', handleUserTyping);
       socket.off('messages_read', handleMessagesRead);
       socket.off('message_sent', handleMessageSent);
@@ -754,6 +862,25 @@ const ChatDetailScreen = () => {
               </View>
             )}
           </View>
+
+          {/* ── Thread badge ── */}
+          {threadCounts[item._id] > 0 && !item.isRevoked && type === 'group' && (
+            <TouchableOpacity
+              style={[styles.threadBadge, {
+                backgroundColor: colors.tint + '18',
+                borderColor: colors.tint + '40',
+                alignSelf: isMyMessage ? 'flex-end' : 'flex-start',
+              }]}
+              onPress={() => openThread(item._id)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="chatbubbles-outline" size={13} color={colors.tint} />
+              <Text style={[styles.threadBadgeText, { color: colors.tint }]}>
+                {threadCounts[item._id]} phản hồi
+              </Text>
+              <Ionicons name="chevron-forward" size={13} color={colors.tint} />
+            </TouchableOpacity>
+          )}
         </View>
       </TouchableOpacity>
     );
@@ -788,6 +915,22 @@ const ChatDetailScreen = () => {
           <TouchableWithoutFeedback>
             <View style={[styles.optionsContainer, { backgroundColor: colors.background }]}>
               <Text style={[styles.optionsTitle, { color: colors.textSecondary }]}>Tùy chọn tin nhắn</Text>
+
+              {/* Tạo thread — chỉ trong group */}
+              {type === 'group' && !selectedMessage?.isRevoked && (
+                <TouchableOpacity style={styles.optionItem} onPress={() => {
+                  setShowMessageOptions(false);
+                  if (selectedMessage) openThread(selectedMessage._id);
+                  setSelectedMessage(null);
+                }}>
+                  <View style={[styles.optionIcon, { backgroundColor: colors.tint + '20' }]}>
+                    <Ionicons name="chatbubbles-outline" size={20} color={colors.tint} />
+                  </View>
+                  <Text style={[styles.optionText, { color: colors.tint }]}>
+                    {threadCounts[selectedMessage?._id || ''] ? 'Mở thread' : 'Tạo thread'}
+                  </Text>
+                </TouchableOpacity>
+              )}
 
               {/* Ghim — ai cũng ghim được */}
               {!selectedMessage?.isRevoked && (
@@ -861,6 +1004,90 @@ const ChatDetailScreen = () => {
         <StatusBar barStyle={scheme === 'dark' ? 'light-content' : 'dark-content'} />
         {renderImageViewer()}
         {renderMessageOptions()}
+
+        {/* ── Thread Panel ── */}
+        <Modal visible={showThread} animationType="slide" transparent onRequestClose={() => setShowThread(false)}>
+          <View style={styles.threadOverlay}>
+            <TouchableOpacity style={styles.threadBackdrop} onPress={() => setShowThread(false)} />
+            <View style={[styles.threadPanel, { backgroundColor: colors.background }]}>
+              {/* Thread Header */}
+              <View style={[styles.threadHeader, { borderBottomColor: colors.borderColor }]}>
+                <Text style={[styles.threadHeaderTitle, { color: colors.text }]}>Thread</Text>
+                <TouchableOpacity onPress={() => setShowThread(false)}>
+                  <Ionicons name="close" size={22} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Tin nhắn gốc */}
+              {threadParent && (
+                <View style={[styles.threadParentBox, { backgroundColor: colors.backgroundElement, borderLeftColor: colors.tint }]}>
+                  <Text style={[styles.threadParentName, { color: colors.tint }]}>{threadParent.sender?.name}</Text>
+                  <Text style={[styles.threadParentContent, { color: colors.text }]} numberOfLines={3}>{threadParent.content}</Text>
+                </View>
+              )}
+
+              {/* Danh sách reply */}
+              <FlatList
+                ref={threadListRef}
+                data={threadMessages}
+                keyExtractor={m => m._id}
+                style={{ flex: 1 }}
+                contentContainerStyle={{ padding: 12, gap: 8 }}
+                ListEmptyComponent={
+                  <Text style={[styles.threadEmpty, { color: colors.textSecondary }]}>Chưa có phản hồi nào. Hãy là người đầu tiên!</Text>
+                }
+                renderItem={({ item }) => {
+                  const isMine = item.sender._id === currentUser?._id;
+                  return (
+                    <View style={[styles.threadMsgRow, isMine && styles.threadMsgRowMine]}>
+                      {!isMine && (
+                        item.sender.avatar
+                          ? <Image source={{ uri: item.sender.avatar }} style={styles.threadAvatar} />
+                          : <View style={[styles.threadAvatar, { backgroundColor: colors.tint + '20', justifyContent: 'center', alignItems: 'center' }]}>
+                              <Text style={{ color: colors.tint, fontWeight: '700', fontSize: 14 }}>{item.sender.name.charAt(0).toUpperCase()}</Text>
+                            </View>
+                      )}
+                      <View style={{ flex: 1 }}>
+                        {!isMine && <Text style={[styles.threadMsgName, { color: colors.tint }]}>{item.sender.name}</Text>}
+                        <View style={[
+                          styles.threadMsgBubble,
+                          { backgroundColor: isMine ? colors.tint : colors.backgroundElement, alignSelf: isMine ? 'flex-end' : 'flex-start' }
+                        ]}>
+                          <Text style={[styles.threadMsgText, { color: isMine ? '#fff' : colors.text }]}>{item.content}</Text>
+                          <Text style={[styles.threadMsgTime, { color: isMine ? 'rgba(255,255,255,0.6)' : colors.textSecondary }]}>{formatTime(item.createdAt)}</Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                }}
+              />
+
+              {/* Input thread */}
+              <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={20}>
+                <View style={[styles.threadInputBar, { borderTopColor: colors.borderColor, backgroundColor: colors.background }]}>
+                  <TextInput
+                    style={[styles.threadInput, { backgroundColor: colors.backgroundElement, color: colors.text }]}
+                    placeholder="Phản hồi trong thread..."
+                    placeholderTextColor={colors.textSecondary}
+                    value={threadInput}
+                    onChangeText={setThreadInput}
+                    multiline
+                  />
+                  <TouchableOpacity
+                    style={[styles.threadSendBtn, { backgroundColor: threadInput.trim() ? colors.tint : colors.backgroundElement }]}
+                    onPress={sendThreadMessage}
+                    disabled={!threadInput.trim() || sendingThread}
+                  >
+                    {sendingThread
+                      ? <ActivityIndicator size="small" color="#fff" />
+                      : <Ionicons name="send" size={18} color={threadInput.trim() ? '#fff' : colors.textSecondary} />
+                    }
+                  </TouchableOpacity>
+                </View>
+              </KeyboardAvoidingView>
+            </View>
+          </View>
+        </Modal>
 
         {/* Header */}
         <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.borderColor }]}>
@@ -940,6 +1167,7 @@ const ChatDetailScreen = () => {
           {showAttachMenu && renderAttachMenu()}
           {showEmojiPicker && renderEmojiPicker()}
         </KeyboardAvoidingView>
+
       </SafeAreaView>
     </>
   );
@@ -973,13 +1201,17 @@ const styles = StyleSheet.create({
   pinnedPreview: { fontSize: 13 },
 
   messagesList: { paddingHorizontal: 12, paddingVertical: 16 },
-  // ── System message (cuộc gọi) ──
-  systemMessageRow: { alignItems: 'center', marginVertical: 8 },
-  systemMessageBubble: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 14, paddingVertical: 6,
-    borderRadius: 16,
+  // ── Thread badge ──
+  threadBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: 12, borderWidth: 1,
+    marginTop: 4, alignSelf: 'flex-start',
   },
+  threadBadgeText: { fontSize: 12, fontWeight: '500' },
+  // ── System message ──
+  systemMessageRow: { alignItems: 'center', marginVertical: 8 },
+  systemMessageBubble: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16 },
   systemMessageText: { fontSize: 13 },
   systemMessageTime: { fontSize: 11, opacity: 0.7 },
   messageRow: { flexDirection: 'row', marginBottom: 8 },
@@ -1039,4 +1271,39 @@ const styles = StyleSheet.create({
   optionItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14 },
   optionIcon: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
   optionText: { fontSize: 16, fontWeight: '500' },
+
+  // ── Thread styles ──
+  threadOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' },
+  threadBackdrop: { flex: 1 },
+  threadPanel: { height: '75%', borderTopLeftRadius: 20, borderTopRightRadius: 20 },
+  threadHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  threadHeaderTitle: { fontSize: 16, fontWeight: '700' },
+  threadEmpty: { textAlign: 'center', marginTop: 32, fontSize: 14 },
+  threadParentBox: {
+    margin: 12, padding: 12, borderRadius: 12, borderLeftWidth: 3,
+  },
+  threadParentName: { fontSize: 12, fontWeight: '700', marginBottom: 4 },
+  threadParentContent: { fontSize: 14, lineHeight: 20 },
+  threadMsgRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 4 },
+  threadMsgRowMine: { flexDirection: 'row-reverse' },
+  threadAvatar: { width: 32, height: 32, borderRadius: 16 },
+  threadMsgName: { fontSize: 11, fontWeight: '600', marginBottom: 2, marginLeft: 4 },
+  threadMsgBubble: { maxWidth: '75%', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16 },
+  threadMsgText: { fontSize: 14, lineHeight: 20 },
+  threadMsgTime: { fontSize: 10, marginTop: 3, textAlign: 'right' as const },
+  threadInputBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 12, paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  threadInput: {
+    flex: 1, maxHeight: 80, paddingHorizontal: 14, paddingVertical: 8,
+    borderRadius: 20, fontSize: 15,
+  },
+  threadSendBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    justifyContent: 'center', alignItems: 'center',
+  },
 });
