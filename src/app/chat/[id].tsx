@@ -101,36 +101,6 @@ const ChatDetailScreen = () => {
 
   const getToken = () => AsyncStorage.getItem('userToken');
 
-  // ─── Socket events for call ──────────────────────────────────────────────────
-  useEffect(() => {
-    const socket = socketService.getSocket();
-    if (!socket) return;
-    socket.on('group_call_offer', ({ groupId, channelName, callerName }) => {
-      if (groupId === id) {
-        Alert.alert('Cuộc gọi nhóm', `${callerName} đang gọi video nhóm...`, [
-          { text: 'Từ chối', style: 'cancel' },
-          { text: 'Tham gia', onPress: () => router.push({ pathname: '/call/[channelName]', params: { channelName, targetId: groupId, isGroup: 'true' } }) },
-        ]);
-      }
-    });
-    return () => { socket.off('group_call_offer'); };
-  }, [id]);
-
-  useEffect(() => {
-    const socket = socketService.getSocket();
-    if (!socket) return;
-    socket.on('incoming_call', ({ from, channelName, callerName }) => {
-      Alert.alert('Cuộc gọi đến', `${callerName} đang gọi video...`, [
-        { text: 'Từ chối', style: 'cancel', onPress: () => socket.emit('call_reject', { to: from }) },
-        { text: 'Trả lời', onPress: () => {
-          socket.emit('call_accept', { to: from, channelName });
-          router.push({ pathname: '/call/[channelName]', params: { channelName, targetId: from, isGroup: 'false' } });
-        }},
-      ]);
-    });
-    return () => { socket.off('incoming_call'); };
-  }, []);
-
   // ─── Fetch functions ─────────────────────────────────────────────────────────
   const fetchCurrentUser = async () => {
     try {

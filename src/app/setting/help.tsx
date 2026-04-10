@@ -204,7 +204,6 @@ const HelpScreen = () => {
           <Text style={[styles.versionText, { color: colors.textSecondary }]}>Phiên bản 1.0.0</Text>
           <Text style={[styles.copyright, { color: colors.textSecondary }]}>© 2026 BizChat. All rights reserved.</Text>
         </View>
-
       </ScrollView>
     </SafeAreaView>
     </>
