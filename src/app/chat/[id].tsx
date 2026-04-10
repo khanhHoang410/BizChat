@@ -15,6 +15,7 @@ import {
   Linking,
   Modal,
   Platform,
+  Pressable,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -454,19 +455,26 @@ const ChatDetailScreen = () => {
 
   const reactToMessage = async (emoji: string) => {
     if (!selectedMessage) return;
+    const msgId = selectedMessage._id;
     setShowReactionPicker(false);
     try {
       const socket = socketService.getSocket();
       if (socket?.connected) {
-        socket.emit('react_message', { messageId: selectedMessage._id, emoji });
+        socket.emit('react_message', { messageId: msgId, emoji });
         return;
       }
       const token = await getToken();
-      await fetch(`${BASE_URL}/api/chat/${selectedMessage._id}/reactions`, {
+      const res = await fetch(`${BASE_URL}/api/chat/${msgId}/reactions`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ emoji }),
       });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && Array.isArray(data.reactions)) {
+        setMessages((prev) =>
+          prev.map((m) => (m._id === msgId ? { ...m, reactions: data.reactions } : m))
+        );
+      }
     } catch (e) {
       console.error('React error:', e);
     } finally {
@@ -716,12 +724,21 @@ const ChatDetailScreen = () => {
       .map(([emoji, count]) => `${emoji}${count > 1 ? ` ${count}` : ''}`)
       .join('  ');
 
+    const openMessageActions = () => handleLongPressMessage(item);
+
     return (
-      // ✅ FIX: Toàn bộ message (kể cả ảnh) đều có onLongPress
-      <TouchableOpacity
-        activeOpacity={0.85}
-        onLongPress={() => handleLongPressMessage(item)}
-        delayLongPress={400}
+      // Native: giữ long-press. Web: long-press khó với chuột → thêm chuột phải (context menu).
+      <Pressable
+        onLongPress={openMessageActions}
+        delayLongPress={Platform.OS === 'web' ? 280 : 400}
+        {...(Platform.OS === 'web'
+          ? ({
+              onContextMenu: (e: { preventDefault?: () => void }) => {
+                e?.preventDefault?.();
+                openMessageActions();
+              },
+            } as object)
+          : {})}
       >
         <View style={[styles.messageRow, isMyMessage ? styles.myMessageRow : styles.otherMessageRow]}>
           {avatarEl}
@@ -763,7 +780,7 @@ const ChatDetailScreen = () => {
             </View>
           </View>
         </View>
-      </TouchableOpacity>
+      </Pressable>
     );
   };
 

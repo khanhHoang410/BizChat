@@ -7,13 +7,20 @@ class SocketService {
 
   connect() {
     this.socket = io(API_BASE, {
-      transports: ['websocket'],
+      transports: ['websocket', 'polling'],
       autoConnect: true,
+      reconnection: true,
+      reconnectionAttempts: 12,
+      reconnectionDelay: 1500,
     });
 
     this.socket.on('connect', () => {
       console.log('✅ Socket connected');
-      this.authenticate();
+      void this.authenticate();
+    });
+
+    this.socket.io.on('reconnect', () => {
+      void this.authenticate();
     });
 
     this.socket.on('disconnect', () => {

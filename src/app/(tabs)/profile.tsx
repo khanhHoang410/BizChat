@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Platform,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -56,6 +57,10 @@ const ProfileScreen = () => {
       console.log('👤 Profile:', data.user);
       setUser(data.user);
       setNotifications(data.user.settings?.notifications ?? true);
+      const serverTheme = data.user?.settings?.theme;
+      if (serverTheme === 'light' || serverTheme === 'dark') {
+        await setPreference(serverTheme);
+      }
     } catch (error) {
       console.error('Fetch profile error:', error);
     } finally {
@@ -130,11 +135,18 @@ const ProfileScreen = () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
       const form = new FormData();
-      form.append('file', {
-        uri,
-        type: mimeType || 'image/jpeg',
-        name: `avatar_${Date.now()}.jpg`,
-      } as any);
+      if (Platform.OS === 'web') {
+        const blobRes = await fetch(uri);
+        const blob = await blobRes.blob();
+        const ext = (mimeType && mimeType.includes('png')) ? 'png' : 'jpg';
+        form.append('file', blob, `avatar_${Date.now()}.${ext}`);
+      } else {
+        form.append('file', {
+          uri,
+          type: mimeType || 'image/jpeg',
+          name: `avatar_${Date.now()}.jpg`,
+        } as any);
+      }
 
       const res = await fetch(`${API_BASE}/api/users/avatar`, {
         method: 'POST',
@@ -152,6 +164,28 @@ const ProfileScreen = () => {
   };
 
   const handleChangeAvatar = () => {
+    if (Platform.OS === 'web') {
+      void (async () => {
+        try {
+          const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (status !== 'granted') {
+            Alert.alert('Cần quyền', 'Vui lòng cho phép truy cập ảnh trong trình duyệt.');
+            return;
+          }
+          const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.85,
+          });
+          if (result.canceled || !result.assets?.[0]) return;
+          await uploadAvatar(result.assets[0].uri, result.assets[0].mimeType ?? undefined);
+        } catch (e: unknown) {
+          Alert.alert('Lỗi', e instanceof Error ? e.message : 'Không chọn được ảnh');
+        }
+      })();
+      return;
+    }
     Alert.alert('Đổi avatar', 'Chọn nguồn ảnh', [
       {
         text: 'Chụp ảnh',

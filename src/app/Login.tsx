@@ -4,7 +4,6 @@ import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -20,6 +19,7 @@ import {
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import socketService from './lib/socket';
 import {
+  GOOGLE_ANDROID_CLIENT_ID,
   GOOGLE_IOS_CLIENT_ID,
   GOOGLE_WEB_CLIENT_ID,
   postEmailPasswordLogin,
@@ -53,6 +53,7 @@ function LoginScreenWeb() {
   const [, , promptAsync] = Google.useIdTokenAuthRequest({
     webClientId: GOOGLE_WEB_CLIENT_ID,
     iosClientId: GOOGLE_IOS_CLIENT_ID,
+    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
   });
 
   const handleEmailLogin = async () => {
@@ -120,23 +121,23 @@ function LoginScreenNative() {
   const [password, setPassword] = useState('vinmotion');
 
   useEffect(() => {
-    GoogleSignin.configure({
-      webClientId: GOOGLE_WEB_CLIENT_ID,
-      iosClientId: GOOGLE_IOS_CLIENT_ID,
-      offlineAccess: false,
-    });
+    WebBrowser.maybeCompleteAuthSession();
   }, []);
+
+  const [, , promptAsync] = Google.useIdTokenAuthRequest({
+    webClientId: GOOGLE_WEB_CLIENT_ID,
+    iosClientId: GOOGLE_IOS_CLIENT_ID,
+    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
+  });
 
   const handleGoogleSignIn = async () => {
     try {
       setLoading(true);
-      await GoogleSignin.hasPlayServices();
-      const userInfo = await GoogleSignin.signIn();
-      const idToken = userInfo.data?.idToken ?? (userInfo as { idToken?: string }).idToken;
+      const result = await promptAsync();
+      if (result?.type !== 'success') return;
 
-      if (!idToken) {
-        throw new Error('Không lấy được ID token');
-      }
+      const idToken = result.params?.id_token as string | undefined;
+      if (!idToken) throw new Error('Không lấy được ID token');
 
       const { ok, data } = await postGoogleIdToken(idToken);
       if (ok) {
@@ -145,14 +146,9 @@ function LoginScreenNative() {
         Alert.alert('Lỗi', (data as { error?: string })?.error || 'Đăng nhập thất bại');
       }
     } catch (error: unknown) {
-      const err = error as { code?: string; message?: string };
       console.error('❌ Google Sign-In error:', error);
-
-      if (err.code === 'SIGN_IN_CANCELLED') {
-        console.log('✋ User cancelled');
-      } else {
-        Alert.alert('Lỗi', err.message || 'Đăng nhập Google thất bại');
-      }
+      const msg = error instanceof Error ? error.message : String(error);
+      if (!msg.toLowerCase().includes('cancel')) Alert.alert('Lỗi', msg || 'Đăng nhập Google thất bại');
     } finally {
       setLoading(false);
     }
