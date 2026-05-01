@@ -2,8 +2,8 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native
 import { Stack } from "expo-router";
 import * as SplashScreen from 'expo-splash-screen';
 import Constants from 'expo-constants';
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, AppState, AppStateStatus, Platform, Text, View } from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import { Animated, AppState, AppStateStatus, Image, Platform, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import socketService from "./lib/socket";
 import { API_BASE } from "@/constants/api";
@@ -21,9 +21,9 @@ function RootLayoutInner() {
     const colorScheme = resolvedScheme;
     const insets = useSafeAreaInsets();
 
-    // In-app notification banner (non-blocking)
-    const [bannerText, setBannerText] = useState<string | null>(null);
-    const bannerY = useRef(new Animated.Value(-80)).current;
+    // In-app notification banner — Messenger style
+    const [bannerData, setBannerData] = useState<{ title: string; body: string; avatar?: string } | null>(null);
+    const bannerY = useRef(new Animated.Value(-120)).current;
     const bannerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Track app state để biết đang foreground hay background
@@ -69,15 +69,20 @@ function RootLayoutInner() {
         initApp();
     },[])
 
-    const showBanner = (text: string) => {
-        setBannerText(text);
-        Animated.timing(bannerY, { toValue: 0, duration: 220, useNativeDriver: true }).start();
+    const showBanner = (data: { title: string; body: string; avatar?: string }) => {
+        setBannerData(data);
+        Animated.spring(bannerY, {
+            toValue: 0,
+            useNativeDriver: true,
+            tension: 80,
+            friction: 10,
+        }).start();
         if (bannerTimer.current) clearTimeout(bannerTimer.current);
         bannerTimer.current = setTimeout(() => {
-            Animated.timing(bannerY, { toValue: -80, duration: 220, useNativeDriver: true }).start(() => {
-                setBannerText(null);
+            Animated.timing(bannerY, { toValue: -120, duration: 280, useNativeDriver: true }).start(() => {
+                setBannerData(null);
             });
-        }, 2200);
+        }, 3500);
     };
 
     useEffect(() => {
@@ -150,7 +155,7 @@ function RootLayoutInner() {
                     });
                 } else {
                     // ── Expo Go hoặc app foreground → in-app banner ──
-                    showBanner(`${title}: ${body}`);
+                    showBanner({ title, body, avatar: msg.sender?.avatar });
                 }
             } catch (e) {
                 console.log('[Notification] handler error:', e);
@@ -178,21 +183,6 @@ function RootLayoutInner() {
     }, []);
 
 
-    const bannerStyle = useMemo(() => ({
-        transform: [{ translateY: bannerY }],
-        position: 'absolute' as const,
-        top: 0,
-        left: 0,
-        right: 0,
-        zIndex: 9999,
-        paddingTop: Math.max(insets.top, 12) + 8,
-        paddingBottom: 12,
-        paddingHorizontal: 16,
-        backgroundColor: colorScheme === 'dark' ? '#1E1E1E' : '#FFFFFF',
-        borderBottomWidth: 1,
-        borderBottomColor: colorScheme === 'dark' ? '#2C2C2E' : '#F0F0F0',
-    }), [bannerY, colorScheme, insets.top]);
-
     const onLayoutRootView = async () => {
         if (appIsReady) {
             await SplashScreen.hideAsync();
@@ -203,17 +193,114 @@ function RootLayoutInner() {
         return null;
     }
 
+    const isDark = colorScheme === 'dark';
+    const avatarInitial = bannerData?.title?.[0]?.toUpperCase() ?? '?';
+
     return (
-        <ThemeProvider value={colorScheme==='dark'?DarkTheme:DefaultTheme}>
-        <View style={{flex:1}} onLayout={onLayoutRootView}>
-        {bannerText && (
-            <Animated.View style={bannerStyle}>
-                <Text style={{ color: colorScheme === 'dark' ? '#FFFFFF' : '#111111', fontSize: 14 }} numberOfLines={2}>
-                    {bannerText}
-                </Text>
+        <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
+        <View style={{ flex: 1 }} onLayout={onLayoutRootView}>
+
+        {/* ── Messenger-style floating notification banner ── */}
+        {bannerData && (
+            <Animated.View
+                style={{
+                    transform: [{ translateY: bannerY }],
+                    position: 'absolute',
+                    top: Math.max(insets.top, 14) + 4,
+                    left: 12,
+                    right: 12,
+                    zIndex: 9999,
+                    borderRadius: 20,
+                    backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF',
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 6 },
+                    shadowOpacity: isDark ? 0.5 : 0.15,
+                    shadowRadius: 16,
+                    elevation: 12,
+                    overflow: 'hidden',
+                }}
+            >
+                <TouchableOpacity
+                    activeOpacity={0.92}
+                    onPress={() => {
+                        if (bannerTimer.current) clearTimeout(bannerTimer.current);
+                        Animated.timing(bannerY, { toValue: -120, duration: 220, useNativeDriver: true }).start(() => setBannerData(null));
+                    }}
+                    style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        paddingHorizontal: 14,
+                        paddingVertical: 12,
+                        gap: 12,
+                    }}
+                >
+                    {/* Avatar */}
+                    <View style={{ position: 'relative' }}>
+                        {bannerData.avatar ? (
+                            <Image
+                                source={{ uri: bannerData.avatar }}
+                                style={{ width: 44, height: 44, borderRadius: 22 }}
+                            />
+                        ) : (
+                            <View style={{
+                                width: 44,
+                                height: 44,
+                                borderRadius: 22,
+                                backgroundColor: '#0084FF',
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                            }}>
+                                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>
+                                    {avatarInitial}
+                                </Text>
+                            </View>
+                        )}
+                        {/* Blue dot indicator (Messenger style) */}
+                        <View style={{
+                            position: 'absolute',
+                            bottom: 0,
+                            right: 0,
+                            width: 14,
+                            height: 14,
+                            borderRadius: 7,
+                            backgroundColor: '#0084FF',
+                            borderWidth: 2,
+                            borderColor: isDark ? '#1C1C1E' : '#FFFFFF',
+                        }} />
+                    </View>
+
+                    {/* Text content */}
+                    <View style={{ flex: 1 }}>
+                        <Text
+                            style={{
+                                fontSize: 14,
+                                fontWeight: '700',
+                                color: isDark ? '#FFFFFF' : '#000000',
+                                marginBottom: 2,
+                            }}
+                            numberOfLines={1}
+                        >
+                            {bannerData.title}
+                        </Text>
+                        <Text
+                            style={{
+                                fontSize: 13,
+                                color: isDark ? '#ABABAB' : '#555555',
+                                lineHeight: 18,
+                            }}
+                            numberOfLines={1}
+                        >
+                            {bannerData.body}
+                        </Text>
+                    </View>
+
+                    {/* Dismiss hint */}
+                    <Text style={{ fontSize: 11, color: isDark ? '#555' : '#BBB', marginLeft: 4 }}>✕</Text>
+                </TouchableOpacity>
             </Animated.View>
         )}
-        <Stack >
+
+        <Stack>
             <Stack.Screen name="Welcome" options={{ headerShown: false }} />
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen name="Login" options={{ headerShown: false }} />
@@ -221,9 +308,9 @@ function RootLayoutInner() {
         </Stack>
         </View>
         </ThemeProvider>
-    )
-    
-}   
+    );
+
+}
 
 export default function RootLayout() {
     return (
