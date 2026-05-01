@@ -1,15 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import Constants from 'expo-constants';
 import React, { useEffect, useState } from 'react';
 import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import {
-  ChannelProfileType,
-  ClientRoleType,
-  createAgoraRtcEngine,
-  RenderModeType,
-  RtcSurfaceView,
-} from 'react-native-agora';
 import { API_BASE } from '@/constants/api';
 import socketService from '../lib/socket';
 
@@ -23,6 +17,7 @@ export default function CallScreen() {
   }>();
   const router = useRouter();
 
+  const isExpoGo = Constants.appOwnership === 'expo';
   const [engine, setEngine] = useState<any>(null);
   const [isJoined, setIsJoined] = useState(false);
   const [remoteUids, setRemoteUids] = useState<number[]>([]);
@@ -30,9 +25,11 @@ export default function CallScreen() {
   const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(true);
   const [isFrontCamera, setIsFrontCamera] = useState(true);
   const [participantCount, setParticipantCount] = useState(1); // bản thân
+  const [RtcSurfaceView, setRtcSurfaceView] = useState<any>(null);
+  const [RenderModeType, setRenderModeType] = useState<any>(null);
 
   useEffect(() => {
-    initAgora();
+    if (!isExpoGo) initAgora();
     return () => {
       if (engine) {
         engine.leaveChannel();
@@ -43,6 +40,23 @@ export default function CallScreen() {
 
   const initAgora = async () => {
     try {
+      const agora = await import('react-native-agora');
+      const {
+        ChannelProfileType,
+        ClientRoleType,
+        RenderModeType,
+        RtcSurfaceView,
+        createAgoraRtcEngine,
+      } = agora as unknown as {
+        ChannelProfileType: any;
+        ClientRoleType: any;
+        RenderModeType: any;
+        RtcSurfaceView: any;
+        createAgoraRtcEngine: () => any;
+      };
+      setRtcSurfaceView(() => RtcSurfaceView);
+      setRenderModeType(() => RenderModeType);
+
       const token = await AsyncStorage.getItem('userToken');
       const userInfo = await AsyncStorage.getItem('userInfo');
       const currentUser = userInfo ? JSON.parse(userInfo) : null;
@@ -93,7 +107,10 @@ export default function CallScreen() {
       await rtcEngine.joinChannel(agoraToken, channelName, uid, {});
     } catch (error) {
       console.error('Agora init error:', error);
-      Alert.alert('Lỗi', 'Không thể khởi tạo cuộc gọi');
+      Alert.alert(
+        'Lỗi',
+        "Không thể khởi tạo cuộc gọi. Nếu bạn đang dùng Expo Go thì bắt buộc phải dùng 'development build' (Expo Dev Client) để chạy Agora."
+      );
       router.back();
     }
   };
@@ -135,37 +152,61 @@ export default function CallScreen() {
   // Hiển thị số người tham gia nếu là nhóm
   const participantText = isGroup === 'true' ? `• ${participantCount} người` : '';
 
+  if (isExpoGo) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.waitingContainer}>
+          <Text style={styles.waitingText}>
+            Tính năng gọi (Agora) không chạy được trên Expo Go.{'\n'}
+            Hãy tạo development build để dùng.
+          </Text>
+          <TouchableOpacity style={[styles.controlBtn, styles.endCallBtn]} onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={22} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       {/* Video từ xa */}
       <View style={styles.remoteContainer}>
-        {remoteUids.map(uid => (
-          <RtcSurfaceView
-            key={uid}
-            canvas={{ uid, renderMode: RenderModeType.RenderModeFit }}
-            style={styles.remoteVideo}
-          />
-        ))}
-        {remoteUids.length === 0 && (
+        {RtcSurfaceView && RenderModeType ? (
+          remoteUids.length > 0 ? (
+            remoteUids.map(uid => (
+              <RtcSurfaceView
+                key={uid}
+                canvas={{ uid, renderMode: RenderModeType.RenderModeFit }}
+                style={styles.remoteVideo}
+              />
+            ))
+          ) : (
+            <View style={styles.waitingContainer}>
+              <Text style={styles.waitingText}>{isJoined ? 'Đang chờ người tham gia...' : 'Đang khởi tạo cuộc gọi...'}</Text>
+            </View>
+          )
+        ) : (
           <View style={styles.waitingContainer}>
-            <Text style={styles.waitingText}>Đang chờ người tham gia...</Text>
+            <Text style={styles.waitingText}>Đang tải module cuộc gọi...</Text>
           </View>
         )}
       </View>
 
       {/* Video local */}
-      <View style={styles.localContainer}>
-        <RtcSurfaceView
-          canvas={{ uid: 0, renderMode: RenderModeType.RenderModeFit }}
-          style={styles.localVideo}
-        />
-        {/* Hiển thị số người tham gia nếu là nhóm */}
-        {isGroup === 'true' && participantCount > 1 && (
-          <View style={styles.participantBadge}>
-            <Text style={styles.participantBadgeText}>{participantText}</Text>
-          </View>
-        )}
-      </View>
+      {RtcSurfaceView && RenderModeType && (
+        <View style={styles.localContainer}>
+          <RtcSurfaceView
+            canvas={{ uid: 0, renderMode: RenderModeType.RenderModeFit }}
+            style={styles.localVideo}
+          />
+          {isGroup === 'true' && participantCount > 1 && (
+            <View style={styles.participantBadge}>
+              <Text style={styles.participantBadgeText}>{participantText}</Text>
+            </View>
+          )}
+        </View>
+      )}
 
       {/* Controls */}
       <View style={styles.controls}>

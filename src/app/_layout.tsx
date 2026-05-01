@@ -81,10 +81,14 @@ function RootLayoutInner() {
     };
 
     useEffect(() => {
-        // Ensure socket is connected for global listeners
-        if (!socketService.getSocket()) socketService.connect();
-        const socket = socketService.getSocket();
-        if (!socket) return;
+        let currentSocket: ReturnType<typeof socketService.getSocket> = null;
+
+        const attachHandler = (socket: NonNullable<ReturnType<typeof socketService.getSocket>>) => {
+            // Gỡ listener cũ nếu có (tránh duplicate)
+            socket.off('receive_message', handler);
+            socket.on('receive_message', handler);
+            console.log('✅ [Notification] receive_message listener attached');
+        };
 
         const handler = async (data: any) => {
             try {
@@ -122,7 +126,7 @@ function RootLayoutInner() {
                 const senderName = isGroup ? (msg.sender?.name || 'Ai đó') : (msg.sender?.name || 'Tin nhắn mới');
                 const groupName = isGroup ? (msg.groupName || 'Nhóm') : null;
                 const title = isGroup ? `${groupName} • ${senderName}` : senderName;
-                const body = msg.type === 'image' ? '📷 Đã gửi một ảnh' 
+                const body = msg.type === 'image' ? '📷 Đã gửi một ảnh'
                            : msg.type === 'file'  ? '📎 Đã gửi một file'
                            : (msg.content || 'Tin nhắn mới');
 
@@ -148,16 +152,31 @@ function RootLayoutInner() {
                     // ── Expo Go hoặc app foreground → in-app banner ──
                     showBanner(`${title}: ${body}`);
                 }
-            } catch {
-                // ignore
+            } catch (e) {
+                console.log('[Notification] handler error:', e);
             }
         };
 
-        socket.on('receive_message', handler);
+        // Poll mỗi 1s cho đến khi socket xuất hiện (sau login), rồi gắn listener
+        const interval = setInterval(() => {
+            const socket = socketService.getSocket();
+            if (socket && socket !== currentSocket) {
+                currentSocket = socket;
+                attachHandler(socket);
+
+                // Khi socket reconnect, gắn lại listener
+                socket.on('connect', () => attachHandler(socket));
+            }
+        }, 1000);
+
         return () => {
-            socket.off('receive_message', handler);
+            clearInterval(interval);
+            if (currentSocket) {
+                currentSocket.off('receive_message', handler);
+            }
         };
     }, []);
+
 
     const bannerStyle = useMemo(() => ({
         transform: [{ translateY: bannerY }],
