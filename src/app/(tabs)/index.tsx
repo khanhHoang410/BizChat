@@ -1,5 +1,6 @@
 import { API_BASE } from '@/constants/api';
 import { Colors } from '@/constants/theme';
+import { useAppColorScheme } from '@/hooks/use-color-scheme';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -18,7 +19,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import socketService from '../lib/socket';
-import { useAppColorScheme } from '@/hooks/use-color-scheme';
 
 // Định nghĩa type cho Conversation
 type Conversation = {
@@ -148,10 +148,15 @@ const HomeScreen = () => {
     }, [])
   );
 
-  // Filter conversations
-  const filteredConversations = conversations.filter(conv =>
-    conv.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Filter conversations theo tên (hỗ trợ tiếng Việt, không phân biệt hoa thường)
+  const normalize = (str: string) =>
+    str.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  const filteredConversations = searchQuery.trim()
+    ? conversations.filter(conv =>
+        normalize(conv.name).includes(normalize(searchQuery))
+      )
+    : conversations;
 
   // Render conversation item
   const renderConversation = ({ item }: { item: Conversation }) => (
@@ -315,12 +320,14 @@ const HomeScreen = () => {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar barStyle={scheme === 'dark' ? 'light-content' : 'dark-content'} />
-      
+
+      {/* Header + Search nằm ngoài FlatList */}
+      {renderHeader()}
+
       <FlatList
         data={filteredConversations}
         keyExtractor={(item) => `${item.type}_${item.id}`}
         renderItem={renderConversation}
-        ListHeaderComponent={renderHeader}
         ListEmptyComponent={renderEmpty}
         refreshControl={
           <RefreshControl

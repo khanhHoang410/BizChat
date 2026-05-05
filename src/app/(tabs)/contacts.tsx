@@ -1,5 +1,6 @@
 import { API_BASE } from '@/constants/api';
 import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
@@ -17,7 +18,6 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 
 // Định nghĩa type cho User
 type User = {
@@ -251,12 +251,11 @@ const fetchUsers = async () => {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar barStyle={scheme === 'dark' ? 'light-content' : 'dark-content'} />
-      
+      {renderHeader()}
       <FlatList
         data={users}
         keyExtractor={(item) => item._id}
         renderItem={renderUser}
-        ListHeaderComponent={renderHeader}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons 

@@ -1,4 +1,6 @@
+import { API_BASE } from '@/constants/api';
 import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -16,8 +18,6 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { API_BASE } from '@/constants/api';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 
 const BASE_URL = API_BASE;
 
@@ -203,12 +203,13 @@ const GroupsScreen = () => {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar barStyle={scheme === 'dark' ? 'light-content' : 'dark-content'} />
-
+      
+      {renderHeader()}
+      
       <FlatList
         data={groups}
         keyExtractor={(item) => item._id}
         renderItem={renderGroupItem}
-        ListHeaderComponent={renderHeader}
         ListEmptyComponent={renderEmpty}
         refreshControl={
           <RefreshControl
