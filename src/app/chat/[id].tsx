@@ -86,6 +86,7 @@ const ChatDetailScreen = () => {
   const hasMarkedReadRef = useRef(false);
   const onViewableItemsChanged = useRef((_: any) => {});
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 });
+  const currentUserRef = useRef<UserInfo | null>(null); // ← thêm ref để dùng trong socket closure
 
   const [currentUser, setCurrentUser] = useState<UserInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -124,7 +125,11 @@ const ChatDetailScreen = () => {
       const token = await getToken();
       const response = await fetch(`${BASE_URL}/api/auth/profile`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await response.json();
-      if (data.user) setCurrentUser({ _id: data.user.id, name: data.user.name, avatar: data.user.avatar, status: data.user.status });
+      if (data.user) {
+        const user = { _id: data.user.id, name: data.user.name, avatar: data.user.avatar, status: data.user.status };
+        setCurrentUser(user);
+        currentUserRef.current = user; // ← update ref luôn
+      }
     } catch (error) { console.error('Fetch current user error:', error); }
   };
 
@@ -151,7 +156,7 @@ const ChatDetailScreen = () => {
       const token = await getToken();
       const response = await fetch(`${BASE_URL}/api/chat/messages/${id}`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await response.json();
-      const msgs: Message[] = data.messages || [];
+      const msgs: Message[] = (data.messages || []).filter((m: any) => !m.thread);
       setMessages(msgs);
       const pinned = msgs.filter(m => m.pinned).sort((a, b) => new Date(b.pinnedAt || 0).getTime() - new Date(a.pinnedAt || 0).getTime())[0];
       setPinnedMessage(pinned || null);
@@ -227,8 +232,10 @@ const ChatDetailScreen = () => {
 
   // ─── Mark as read ─────────────────────────────────────────────────────────────
   const markMessagesAsRead = useCallback(async (msgs: Message[], user: UserInfo) => {
-    if (hasMarkedReadRef.current || type === 'group') return;
-    const unreadIds = msgs.filter(msg => msg.sender._id !== user._id && !msg.readBy.includes(user._id)).map(msg => msg._id);
+    if (hasMarkedReadRef.current) return; // ← bỏ điều kiện type === 'group'
+    const unreadIds = msgs
+      .filter(msg => msg.sender._id !== user._id && !msg.readBy.includes(user._id))
+      .map(msg => msg._id);
     if (unreadIds.length === 0) return;
     hasMarkedReadRef.current = true;
     try {
@@ -238,17 +245,26 @@ const ChatDetailScreen = () => {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ messageIds: unreadIds }),
       });
-      setMessages(prev => prev.map(msg => ({ ...msg, readBy: unreadIds.includes(msg._id) ? [...msg.readBy, user._id] : msg.readBy })));
+      setMessages(prev => prev.map(msg => ({
+        ...msg,
+        readBy: unreadIds.includes(msg._id) ? [...msg.readBy, user._id] : msg.readBy
+      })));
       const socket = socketService.getSocket();
-      if (socket?.connected) socket.emit('messages_read', { messageIds: unreadIds, readerId: user._id, senderId: id });
+      if (socket?.connected) {
+        socket.emit('messages_read', { messageIds: unreadIds, readerId: user._id, senderId: id });
+      }
     } catch { hasMarkedReadRef.current = false; }
   }, [id, type]);
 
   useEffect(() => {
     onViewableItemsChanged.current = ({ viewableItems }: { viewableItems: Array<{ item: Message }> }) => {
-      if (!currentUser || type === 'group') return;
+      if (!currentUser) return; // ← bỏ điều kiện type === 'group'
       const visibleIds = viewableItems.map(v => v.item._id);
-      const hasUnread = messages.some(msg => visibleIds.includes(msg._id) && msg.sender._id !== currentUser._id && !msg.readBy.includes(currentUser._id));
+      const hasUnread = messages.some(msg =>
+        visibleIds.includes(msg._id) &&
+        msg.sender._id !== currentUser._id &&
+        !msg.readBy.includes(currentUser._id)
+      );
       if (hasUnread) markMessagesAsRead(messages, currentUser);
     };
   }, [messages, currentUser, markMessagesAsRead, type]);
@@ -271,7 +287,16 @@ const ChatDetailScreen = () => {
         flatListRef.current?.scrollToEnd({ animated: true });
         hasMarkedReadRef.current = false;
       } else if (type === 'group' && data.type === 'group' && data.message.group === id) {
-        setMessages(prev => [...prev, data.message]);
+        // Nếu là tin nhắn của chính mình → đã có temp rồi, chỉ replace temp bằng tin thật
+        setMessages(prev => {
+          const hasTemp = prev.some(m => m._id.startsWith('temp_'));
+          if (hasTemp && data.message.sender._id === currentUserRef.current?._id) {
+            // Replace temp bằng tin nhắn thật từ server
+            return prev.map(m => m._id.startsWith('temp_') ? data.message : m);
+          }
+          // Tin nhắn của người khác → thêm vào
+          return [...prev, data.message];
+        });
         flatListRef.current?.scrollToEnd({ animated: true });
       }
     };
@@ -290,12 +315,15 @@ const ChatDetailScreen = () => {
     };
 
     const handleMessageSent = (data: { messageId: string }) => {
-      // Chỉ update temp trong chat chính, không đụng thread
-      setMessages(prev => {
-        const hasTemp = prev.some(msg => msg._id.startsWith('temp_'));
-        if (!hasTemp) return prev;
-        return prev.map(msg => msg._id.startsWith('temp_') ? { ...msg, _id: data.messageId } : msg);
-      });
+      // Private: replace temp bằng messageId thật
+      // Group: không cần xử lý ở đây vì receive_message đã replace temp rồi
+      if (type === 'private') {
+        setMessages(prev => {
+          const hasTemp = prev.some(msg => msg._id.startsWith('temp_'));
+          if (!hasTemp) return prev;
+          return prev.map(msg => msg._id.startsWith('temp_') ? { ...msg, _id: data.messageId } : msg);
+        });
+      }
     };
 
     const handleMessageError = () => {
