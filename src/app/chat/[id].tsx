@@ -33,14 +33,20 @@ type Message = {
   _id: string;
   sender: { _id: string; name: string; avatar?: string };
   content: string;
-  type: 'text' | 'image' | 'file' | 'system';
+  type: 'text' | 'image' | 'file' | 'system' | 'poll';
   createdAt: string;
   readBy: string[];
   attachments?: { url: string; type: string; name: string }[];
   isRevoked?: boolean;
   pinned?: boolean;
   pinnedAt?: string;
-  threadCount?: number; // số reply trong thread
+  threadCount?: number;
+  metadata?: {
+    poll?: {
+      options: string[];
+      votes: { user: string; option: number }[];
+    };
+  };
 };
 
 type UserInfo = {
@@ -117,7 +123,59 @@ const ChatDetailScreen = () => {
   const [sendingThread, setSendingThread] = useState(false);
   const threadListRef = useRef<FlatList>(null);
 
+  // ── Poll state ────────────────────────────────────────────────────────────────
+  const [showPollModal, setShowPollModal] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollOptions, setPollOptions] = useState(['', '']);
+  const [creatingPoll, setCreatingPoll] = useState(false);
+
   const getToken = () => AsyncStorage.getItem('userToken');
+
+  // ─── Poll functions ───────────────────────────────────────────────────────────
+  const createPoll = async () => {
+    if (!pollQuestion.trim()) return Alert.alert('Lỗi', 'Nhập câu hỏi bình chọn');
+    const validOptions = pollOptions.map(o => o.trim()).filter(Boolean);
+    if (validOptions.length < 2) return Alert.alert('Lỗi', 'Cần ít nhất 2 lựa chọn');
+    setCreatingPoll(true);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/api/chat/poll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ groupId: id, question: pollQuestion.trim(), options: validOptions }),
+      });
+      const data = await res.json();
+      if (res.ok && data.message) {
+        setMessages(prev => [...prev, data.message]);
+        flatListRef.current?.scrollToEnd({ animated: true });
+        const socket = socketService.getSocket();
+        setShowPollModal(false);
+        setPollQuestion('');
+        setPollOptions(['', '']);
+      } else Alert.alert('Lỗi', data.error || 'Không thể tạo bình chọn');
+    } catch (e) { Alert.alert('Lỗi', 'Không thể kết nối server'); }
+    finally { setCreatingPoll(false); }
+  };
+
+  const votePoll = async (messageId: string, optionIndex: number) => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${BASE_URL}/api/chat/poll/${messageId}/vote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ optionIndex }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMessages(prev => prev.map(m =>
+          m._id === messageId ? { ...m, metadata: { ...m.metadata, poll: data.poll } } : m
+        ));
+        // Emit socket để realtime
+        const socket = socketService.getSocket();
+        socket?.emit('vote_poll', { messageId, optionIndex });
+      }
+    } catch (e) { console.error('Vote error:', e); }
+  };
 
   // ─── Fetch functions ─────────────────────────────────────────────────────────
   const fetchCurrentUser = async () => {
@@ -374,12 +432,18 @@ const ChatDetailScreen = () => {
     socket.on('message_error', handleMessageError);
     socket.on('message_revoked', handleMessageRevoked);
     socket.on('message_pinned', handleMessagePinned);
+    socket.on('poll_updated', ({ messageId, poll }: { messageId: string; poll: any }) => {
+      setMessages(prev => prev.map(m =>
+        m._id === messageId ? { ...m, metadata: { ...m.metadata, poll } } : m
+      ));
+    });
 
     if (type === 'group' && socket.connected) socket.emit('join_group', id);
 
     return () => {
       socket.off('receive_message', handleReceiveMessage);
       socket.off('receive_thread_message', handleReceiveThreadMessage);
+      socket.off('poll_updated');
       socket.off('user_typing', handleUserTyping);
       socket.off('messages_read', handleMessagesRead);
       socket.off('message_sent', handleMessageSent);
@@ -702,6 +766,14 @@ const ChatDetailScreen = () => {
           </View>}
         <Text style={[styles.attachMenuLabel, { color: colors.text }]}>File</Text>
       </TouchableOpacity>
+      {type === 'group' && (
+        <TouchableOpacity style={styles.attachMenuItem} onPress={() => { setShowAttachMenu(false); setShowPollModal(true); }}>
+          <View style={[styles.attachMenuIcon, { backgroundColor: '#9C27B020' }]}>
+            <Ionicons name="bar-chart-outline" size={28} color="#9C27B0" />
+          </View>
+          <Text style={[styles.attachMenuLabel, { color: colors.text }]}>Bình chọn</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 
@@ -781,6 +853,59 @@ const ChatDetailScreen = () => {
             </Text>
             <Text style={[styles.systemMessageTime, { color: colors.textSecondary }]}>
               {formatTime(item.createdAt)}
+            </Text>
+          </View>
+        </View>
+      );
+    }
+
+    // ── Poll bubble ──────────────────────────────────────────────────────────────
+    if (item.type === 'poll' && item.metadata?.poll) {
+      const poll = item.metadata.poll;
+      const totalVotes = poll.votes.length;
+      const myVote = poll.votes.find(v => v.user === currentUser?._id);
+
+      return (
+        <View style={styles.pollRow}>
+          <View style={[styles.pollBubble, { backgroundColor: colors.backgroundElement, borderColor: colors.tint + '30' }]}>
+            {/* Header */}
+            <View style={styles.pollHeader}>
+              <Ionicons name="bar-chart-outline" size={16} color={colors.tint} />
+              <Text style={[styles.pollLabel, { color: colors.tint }]}>BÌNH CHỌN</Text>
+              <Text style={[styles.pollSender, { color: colors.textSecondary }]}>· {item.sender.name}</Text>
+            </View>
+            <Text style={[styles.pollQuestion, { color: colors.text }]}>{item.content}</Text>
+
+            {/* Options */}
+            {poll.options.map((option, idx) => {
+              const voteCount = poll.votes.filter(v => v.option === idx).length;
+              const percent = totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
+              const isMyChoice = myVote?.option === idx;
+
+              return (
+                <TouchableOpacity
+                  key={idx}
+                  style={[styles.pollOption, { borderColor: isMyChoice ? colors.tint : colors.borderColor }]}
+                  onPress={() => votePoll(item._id, idx)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.pollProgressBar, { width: `${percent}%` as any, backgroundColor: colors.tint + '25' }]} />
+                  <View style={styles.pollOptionContent}>
+                    <View style={styles.pollOptionLeft}>
+                      {isMyChoice
+                        ? <Ionicons name="checkmark-circle" size={18} color={colors.tint} />
+                        : <View style={[styles.pollCircle, { borderColor: colors.borderColor }]} />}
+                      <Text style={[styles.pollOptionText, { color: colors.text, fontWeight: isMyChoice ? '700' : '400' }]}>{option}</Text>
+                    </View>
+                    <Text style={[styles.pollVoteCount, { color: colors.textSecondary }]}>{percent}%</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+
+            {/* Footer */}
+            <Text style={[styles.pollFooter, { color: colors.textSecondary }]}>
+              {totalVotes} người đã bình chọn · {formatTime(item.createdAt)}
             </Text>
           </View>
         </View>
@@ -1196,6 +1321,79 @@ const ChatDetailScreen = () => {
           {showEmojiPicker && renderEmojiPicker()}
         </KeyboardAvoidingView>
 
+        {/* ── Poll Modal ── */}
+        <Modal visible={showPollModal} transparent animationType="slide" onRequestClose={() => setShowPollModal(false)}>
+          <TouchableWithoutFeedback onPress={() => setShowPollModal(false)}>
+            <View style={styles.pollModalOverlay}>
+              <TouchableWithoutFeedback>
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'position' : 'height'} keyboardVerticalOffset={0}>
+                  <View style={[styles.pollModalBox, { backgroundColor: colors.background }]}>
+                  <View style={styles.pollModalHeader}>
+                    <Text style={[styles.pollModalTitle, { color: colors.text }]}>🗳️ Tạo bình chọn</Text>
+                    <TouchableOpacity onPress={() => setShowPollModal(false)}>
+                      <Ionicons name="close" size={22} color={colors.text} />
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Câu hỏi */}
+                  <TextInput
+                    style={[styles.pollModalInput, { backgroundColor: colors.backgroundElement, color: colors.text }]}
+                    placeholder="Câu hỏi bình chọn..."
+                    placeholderTextColor={colors.textSecondary}
+                    value={pollQuestion}
+                    onChangeText={setPollQuestion}
+                    maxLength={100}
+                  />
+
+                  {/* Các lựa chọn */}
+                  <Text style={[styles.pollModalSectionTitle, { color: colors.textSecondary }]}>Lựa chọn</Text>
+                  {pollOptions.map((opt, idx) => (
+                    <View key={idx} style={styles.pollOptionRow}>
+                      <TextInput
+                        style={[styles.pollModalInput, { flex: 1, backgroundColor: colors.backgroundElement, color: colors.text }]}
+                        placeholder={`Lựa chọn ${idx + 1}`}
+                        placeholderTextColor={colors.textSecondary}
+                        value={opt}
+                        onChangeText={text => {
+                          const newOpts = [...pollOptions];
+                          newOpts[idx] = text;
+                          setPollOptions(newOpts);
+                        }}
+                        maxLength={50}
+                      />
+                      {pollOptions.length > 2 && (
+                        <TouchableOpacity onPress={() => setPollOptions(prev => prev.filter((_, i) => i !== idx))} style={{ padding: 8 }}>
+                          <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  ))}
+
+                  {/* Thêm lựa chọn */}
+                  {pollOptions.length < 5 && (
+                    <TouchableOpacity style={styles.pollAddOption} onPress={() => setPollOptions(prev => [...prev, ''])}>
+                      <Ionicons name="add-circle-outline" size={20} color={colors.tint} />
+                      <Text style={[styles.pollAddOptionText, { color: colors.tint }]}>Thêm lựa chọn</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {/* Nút tạo */}
+                  <TouchableOpacity
+                    style={[styles.pollCreateBtn, { backgroundColor: colors.tint }]}
+                    onPress={createPoll}
+                    disabled={creatingPoll}
+                  >
+                    {creatingPoll
+                      ? <ActivityIndicator color="#fff" />
+                      : <Text style={styles.pollCreateBtnText}>Tạo bình chọn</Text>}
+                  </TouchableOpacity>
+                </View>
+                </KeyboardAvoidingView>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </Modal>
+
       </SafeAreaView>
     </>
   );
@@ -1334,4 +1532,46 @@ const styles = StyleSheet.create({
     width: 36, height: 36, borderRadius: 18,
     justifyContent: 'center', alignItems: 'center',
   },
+
+  // ── Poll styles ──
+  pollRow: { alignItems: 'center', marginVertical: 4, paddingHorizontal: 12 },
+  pollBubble: {
+    width: '100%', borderRadius: 16, borderWidth: 1, padding: 14,
+  },
+  pollSender: { fontSize: 11 },
+  pollHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+  pollLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },
+  pollQuestion: { fontSize: 15, fontWeight: '700', marginBottom: 12, lineHeight: 20 },
+  pollOption: {
+    position: 'relative', borderRadius: 10, borderWidth: 1.5,
+    marginBottom: 8, overflow: 'hidden',
+  },
+  pollProgressBar: {
+    position: 'absolute', top: 0, left: 0, bottom: 0, borderRadius: 10,
+  },
+  pollOptionContent: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 12, paddingVertical: 10,
+  },
+  pollOptionLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  pollCircle: { width: 18, height: 18, borderRadius: 9, borderWidth: 1.5 },
+  pollOptionText: { fontSize: 14, flex: 1 },
+  pollVoteCount: { fontSize: 12, fontWeight: '600', marginLeft: 8 },
+  pollFooter: { fontSize: 11, marginTop: 8, textAlign: 'center' },
+
+  // Poll Modal
+  pollModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  pollModalBox: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 40, maxHeight: '90%' },
+  pollModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  pollModalTitle: { fontSize: 18, fontWeight: '700' },
+  pollModalSectionTitle: { fontSize: 12, fontWeight: '600', marginBottom: 8, marginTop: 4 },
+  pollModalInput: {
+    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
+    fontSize: 15, marginBottom: 8,
+  },
+  pollOptionRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  pollAddOption: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, marginBottom: 8 },
+  pollAddOptionText: { fontSize: 14, fontWeight: '500' },
+  pollCreateBtn: { borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
+  pollCreateBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 });
